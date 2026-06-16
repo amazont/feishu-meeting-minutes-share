@@ -89,16 +89,22 @@ LOG=$(ls -t ~/会议纪要/_logs/daily-minutes_*.log 2>/dev/null | head -1); cat
 |---|---|
 | init 报拿不到 open_id / 解析失败 | 授权不全 → 给用户那行 `lark-cli auth login --scope ...` 补授权后重跑 init |
 | run 日志含 `Not logged in` | 让用户跑 `claude` / `sc claude` 登录一次 |
-| 生成 0 篇 | 今天暂无妙记,正常,晚点重跑 |
-| 同一天重复跑出现重复文档 | 当天节点会复用但文档会叠加;重跑前先删旧的那套 |
+| 生成 0 篇 / 「无新增」 | 今天暂无妙记或都已处理(去重),正常,晚点重跑 |
+| 定时跑失败但手动 OK | launchd/cron PATH 太干净 → 本版已在 plist 注入 PATH+WorkingDirectory;确认 `~/Library/LaunchAgents/*.plist` 含 `EnvironmentVariables/PATH` |
+| 某篇带「⚠️ 待复核」 | checker 打分 < `MIN_SCORE` 且重写后仍不达标;已归档,缺口见 `$BASE_DIR/.loop-engine/state.md` |
+| 想改质量阈值 | 改 `config.sh` 的 `MIN_SCORE` / `REDRAFT_MAX` |
 | 想改本地存放目录 | 改 `config.sh` 的 `BASE_DIR` |
+| 想卸载 / 打包分发 | `./uninstall.sh`(留数据)、`./uninstall.sh --purge`(删配置/状态)、`./dist.sh`(干净 zip) |
 
 ## 文件说明(供你理解,不用改)
 
-- `init.sh` — 一键初始化(零输入,自动探测配置)。
-- `run.sh` — 入口脚本:确定性建节点 + 调 workflow + 拉回备份 + 失败告警。自动识别 `sc claude` 或 `claude`。
-- `daily-meeting-minutes.js` — workflow 脚本(发现妙记 → pipeline 生成 → 建档 → 通知),配置全由 `run.sh` 经 args 注入。
-- `config.sh` — 由 init.sh 生成的本地配置(含个人 open_id,**不要外传**)。
+- `init.sh` — 一键初始化(零输入,自动探测配置;建 `.loop-engine` 状态目录;plist 注入 PATH/WorkingDirectory)。
+- `run.sh` — 入口脚本:依赖/PATH 自检 + 确定性建节点 + 调 workflow + 失败告警(已修 set -e 死代码)+ 读 `_result.json` 写台账/state + 拉回备份 + 日志轮转。自动识别 `sc claude` 或 `claude`。
+- `daily-meeting-minutes.js` — workflow:发现(读 ledger 去重)→ 生成 → 独立 checker 打分(不达标按缺口重写)→ 建档 → 通知 → 写 `_result.json`。配置全由 `run.sh` 经 args 注入。
+- `update_state.py` — 由 run.sh 调用:读 `_result.json` → 追加去重台账 `processed.tsv` + 重写 `state.md`(loop-engine schema)。
+- `uninstall.sh` / `dist.sh` — 卸载;干净打包(git archive,排除 config.sh)。
+- `config.sh` — 由 init.sh 生成的本地配置(含个人 open_id 与 MIN_SCORE/REDRAFT_MAX,**不要外传**)。
+- `$BASE_DIR/.loop-engine/` — 运行状态:`processed.tsv`(去重台账)+ `state.md`(人读)。**不随包分发**。
 - `README.md` — 给人看的版本。
 
 ---

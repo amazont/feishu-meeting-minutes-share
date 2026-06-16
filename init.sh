@@ -11,10 +11,12 @@ json() { python3 -c "import sys; t=sys.stdin.read(); i=t.find('{'); sys.stdout.w
 
 # 1) 依赖检查
 command -v lark-cli >/dev/null 2>&1 || { echo "❌ 未安装 lark-cli。请先安装并运行 lark-cli config init"; exit 1; }
+command -v python3  >/dev/null 2>&1 || { echo "❌ 未安装 python3(脚本解析 lark-cli 输出依赖它)"; exit 1; }
+command -v node     >/dev/null 2>&1 || { echo "❌ 未安装 node(workflow 运行依赖它)"; exit 1; }
 RUNNER=""
 if command -v sc >/dev/null 2>&1; then RUNNER="sc claude"; elif command -v claude >/dev/null 2>&1; then RUNNER="claude"; fi
 [ -n "$RUNNER" ] || { echo "❌ 未找到 sc 或 claude 命令"; exit 1; }
-echo "✅ 依赖就绪:lark-cli + ${RUNNER}"
+echo "✅ 依赖就绪:lark-cli + python3 + node + ${RUNNER}"
 
 # 2) 自动获取你的 open_id(通知用)
 OPEN_ID="$(lark-cli contact +get-user --format json 2>/dev/null | grep -oE 'ou_[a-z0-9]+' | head -1)"
@@ -67,8 +69,48 @@ SPACE_ID="$SPACE_ID"
 OPEN_ID="$OPEN_ID"
 MINUTE_HOST="$HOST"
 BASE_DIR="$BASE_DIR"
+
+# checker 质量校验:低于 MIN_SCORE 自动重写(最多 REDRAFT_MAX 次额外重写)
+MIN_SCORE=80
+REDRAFT_MAX=1
+# 同一篇 BLOCKED(取不到产物)当天最多重试几次,达到后当天放弃(高频心跳防空跑)
+BLOCKED_GIVEUP=3
 EOF
 echo "✅ 已写入配置:$HERE/config.sh"
+
+# 6b) 建 loop-engine 状态目录 + 初始 state.md 骨架(去重台账与人读状态都放数据侧)
+STATE_DIR="$BASE_DIR/.loop-engine"; mkdir -p "$STATE_DIR"
+touch "$STATE_DIR/processed.tsv"
+if [ ! -f "$STATE_DIR/state.md" ]; then
+  cat > "$STATE_DIR/state.md" <<EOF
+# Goal: 每天把当日飞书妙记自动生成达标(score≥80)的 5 维度会议纪要并归档知识库
+
+- 节奏: 由 launchd/cron 心跳触发(见 config.sh 的 SCHED_*)
+- 模式: 无人值守
+- 状态目录: $STATE_DIR
+- 去重台账: $STATE_DIR/processed.tsv
+
+## 停止条件 completion criteria(每次心跳对当日妙记求值)
+
+- [ ] C1 覆盖度: 当日发现的妙记全部进入处理
+- [ ] C2 正确性: 每篇 checker verdict=DONE
+- [ ] C3 可验证性: 每篇已建知识库文档且有 url
+- [ ] C4 一致性: Lark-flavored 渲染正常
+
+## 轮次日志
+
+(尚未运行,首次 ./run.sh 后由 update_state.py 写入)
+
+## 当前未决缺口(下次心跳重试 / 待人复核)
+
+- (无)
+
+## BLOCKED / 待人决策
+
+- (无)
+EOF
+fi
+echo "✅ 已建状态目录:$STATE_DIR(去重台账 + state.md)"
 
 # 7) 安装 workflow 到 Claude/stepcode workflows 目录
 mkdir -p "$HOME/.claude/workflows"
@@ -148,6 +190,13 @@ install_launchd() {
         <string>/bin/zsh</string>
         <string>$HERE/run.sh</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>$PATH</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>$HERE</string>
 $sched_block
     <key>StandardOutPath</key>
     <string>$BASE_DIR/_logs/launchd.out.log</string>

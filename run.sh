@@ -1,9 +1,12 @@
 #!/bin/zsh
 # 每日飞书会议纪要 — 入口脚本(可被 launchd/cron 调用,也可手动运行)
-# 关键设计:建节点 + 本地备份 都用确定性 bash 完成,不交给 AI(避免 agent 跳过命令)。
+# 关键设计:建节点 / 写台账 / 写 state / 本地备份 都用确定性 bash 完成,不交给 AI。
+#           质量判定交给 workflow 里的独立 checker。
 
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# 防御性 PATH:launchd/cron 的 PATH 极简,补上常见安装目录,避免找不到 lark-cli/sc/node/python3
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/bin:$HOME/.npm-global/bin:$PATH"
 
 # 读取个人配置:优先 config.sh,没有就提示先跑 init
 if [ -f "$HERE/config.sh" ]; then
@@ -11,20 +14,31 @@ if [ -f "$HERE/config.sh" ]; then
 else
   echo "❌ 缺少 $HERE/config.sh —— 请先运行一键初始化:  ./init.sh"; exit 1
 fi
+MIN_SCORE="${MIN_SCORE:-80}"; REDRAFT_MAX="${REDRAFT_MAX:-1}"; BLOCKED_GIVEUP="${BLOCKED_GIVEUP:-3}"
 
-# 定位 CLI:lark-cli 必需;运行器优先 sc(stepcode),否则 claude
+# 定位 CLI:lark-cli 必需;运行器优先 sc(stepcode),否则 claude;python3/node 必需
 LARK="$(command -v lark-cli)"
 [ -z "$LARK" ] && { echo "❌ 未找到 lark-cli"; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "❌ 未找到 python3(脚本解析 lark-cli 输出依赖它)"; exit 1; }
+command -v node    >/dev/null 2>&1 || { echo "❌ 未找到 node(workflow 运行依赖它)"; exit 1; }
 if command -v sc >/dev/null 2>&1; then RUN=(sc claude); elif command -v claude >/dev/null 2>&1; then RUN=(claude); else echo "❌ 未找到 sc 或 claude"; exit 1; fi
 
 LOG_DIR="$BASE_DIR/_logs"; mkdir -p "$LOG_DIR"
+# 日志轮转:清理 14 天前的运行日志
+find "$LOG_DIR" -name 'daily-minutes_*.log' -mtime +14 -delete 2>/dev/null || true
 STAMP="$(date +%Y-%m-%d_%H%M%S)"; DAY="$(date +%Y-%m-%d)"
 LOG="$LOG_DIR/daily-minutes_$STAMP.log"
 cd "$HOME"
 echo "===== 启动 $STAMP =====" >> "$LOG" 2>&1
 
+# loop-engine 状态目录(去重台账 + 人读 state),放数据侧、不随包分发
+STATE_DIR="$BASE_DIR/.loop-engine"; mkdir -p "$STATE_DIR"
+LEDGER="$STATE_DIR/processed.tsv"; touch "$LEDGER"
+STATE_MD="$STATE_DIR/state.md"
+
 # 1) 本地当天目录
 LOCAL_DIR="$BASE_DIR/$DAY"; mkdir -p "$LOCAL_DIR"
+rm -f "$LOCAL_DIR/_result.json"  # 清理上次结果,避免误读旧数据
 
 # 2) 确定性建/复用知识库当天容器节点(按标题查重,幂等)
 DAY_TITLE="$DAY 会议纪要"
@@ -47,10 +61,17 @@ fi
 [ -z "$DAY_NODE" ] && { echo "[setup] ❌ 无法获得当天节点 token,终止" >> "$LOG" 2>&1; \
   "$LARK" im +messages-send --user-id "$OPEN_ID" --text "⚠️ 会议纪要任务失败($STAMP):无法创建知识库当天节点" >> "$LOG" 2>&1; exit 1; }
 
-# 3) headless 跑 workflow,把 dayNode/localDir/openId/minuteHost 通过指令传入
-"${RUN[@]}" -p "用 Workflow 工具运行命名 workflow「daily-meeting-minutes」(name: \"daily-meeting-minutes\"),args 设为 {\"dayNode\":\"$DAY_NODE\",\"localDir\":\"$LOCAL_DIR\",\"openId\":\"$OPEN_ID\",\"minuteHost\":\"$MINUTE_HOST\"}。完成后简要汇报。" \
-  --permission-mode bypassPermissions >> "$LOG" 2>&1
+# 3) headless 跑 workflow,把 dayNode/localDir/openId/minuteHost/skipTokens/minScore 通过指令传入
+#    去重判定在 bash 端确定性完成:已建文档的永久跳过、当天 BLOCKED 满 BLOCKED_GIVEUP 次的当天放弃
+SKIP_TOKENS="$(python3 "$HERE/update_state.py" skip "$LEDGER" "$DAY" "$BLOCKED_GIVEUP" 2>>"$LOG")"
+echo "[dedup] 跳过 token: ${SKIP_TOKENS:-(无)}" >> "$LOG" 2>&1
+#    ⚠️ 用 set +e 包住运行器调用:否则运行器非零退出时 set -e 会抢先终止,
+#    导致下面的 RC 捕获与飞书告警(第 4 步)成为永远到不了的死代码。
+set +e
+"${RUN[@]}" -p "用 Workflow 工具运行命名 workflow「daily-meeting-minutes」(name: \"daily-meeting-minutes\"),args 设为 {\"dayNode\":\"$DAY_NODE\",\"localDir\":\"$LOCAL_DIR\",\"openId\":\"$OPEN_ID\",\"minuteHost\":\"$MINUTE_HOST\",\"skipTokens\":\"$SKIP_TOKENS\",\"minScore\":$MIN_SCORE,\"redraftMax\":$REDRAFT_MAX}。完成后简要汇报。" \
+  --permission-mode bypassPermissions < /dev/null >> "$LOG" 2>&1
 RC=$?
+set -e
 echo "===== 结束 退出码 $RC =====" >> "$LOG" 2>&1
 
 # 4) 失败告警(未登录/非零退出)
@@ -75,4 +96,13 @@ for n in (d.get('data') or {}).get('nodes') or []:
     except Exception: c=''
     if c: open(out,'w').write(c); print('[backup] '+out)
 " >> "$LOG" 2>&1
+
+# 6) 读 workflow 落盘的 _result.json → 确定性追加去重台账 + 刷新人读 state.md
+if [ -f "$LOCAL_DIR/_result.json" ]; then
+  python3 "$HERE/update_state.py" update "$LOCAL_DIR/_result.json" "$DAY" "$LEDGER" "$STATE_MD" "$STAMP" "$MIN_SCORE" "$BLOCKED_GIVEUP" >> "$LOG" 2>&1 \
+    || echo "[state] update_state.py 执行失败(详见上)" >> "$LOG" 2>&1
+else
+  echo "[state] 未找到 _result.json,跳过台账/state 更新(workflow 可能未正常返回)" >> "$LOG" 2>&1
+fi
+
 echo "[done] $STAMP 完成" >> "$LOG" 2>&1

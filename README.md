@@ -66,16 +66,33 @@ crontab -l | grep daily-meeting-minutes
 - **init 报"拿不到 open_id / 解析失败"** → 飞书授权没给全，按它打印的 `lark-cli auth login --scope ...` 补一下再重跑 `./init.sh`。
 - **run 报"未登录"** → 跑一次 `claude`（或 `sc claude`）登录一下。脚本会自动识别用哪个。
 - **某天没跑成** → 多半是登录态问题，`run.sh` 会自动发飞书告警提示你。
-- **同一天重复跑** → 当天节点会复用（不重复建），但文档会叠加（暂未对妙记去重）；想重跑先删旧的那套。
+- **同一天重复跑** → 已支持跨运行去重(`.loop-engine/processed.tsv`):只跳过已成功的妙记,**不再产生重复文档**;上次失败/待复核的会自动重试。
+- **某篇带「⚠️ 待复核」** → checker 打分低于 `MIN_SCORE` 且重写后仍不达标,已归档但建议人工看一眼;缺口记在 `.loop-engine/state.md`。
+- **定时跑失败但手动能跑** → 多半是 launchd/cron 的 PATH 太干净找不到 lark-cli/node。本版已在 plist 注入 PATH + WorkingDirectory;Linux cron 用 `/bin/bash run.sh`,run.sh 也会自己补常见 PATH。
 - **想改本地存放目录** → 编辑 `config.sh` 里的 `BASE_DIR`。
+- **想改质量阈值** → 编辑 `config.sh` 的 `MIN_SCORE` / `REDRAFT_MAX`。
 
 ## 它做了什么（架构）
 
 ```
-run.sh（确定性 bash）
- ├─ 建/复用 本地当天目录 + 知识库当天节点      ← 不交给 AI
- ├─ (sc) claude -p 调起 workflow(传 dayNode/localDir…)
- │    └─ workflow: 发现妙记 → pipeline[ 生成 → 建档 ] → 通知
- ├─ 失败告警(未登录/出错 → 飞书消息)
- └─ 从当天节点把文档确定性拉回本地备份          ← 不交给 AI
+run.sh(确定性 bash)
+ ├─ 依赖/PATH 自检(lark-cli/python3/node/sc) + 日志轮转
+ ├─ 建/复用 本地当天目录 + 知识库当天节点          ← 不交给 AI
+ ├─ (sc) claude -p 调起 workflow(传 dayNode/localDir/ledger/minScore…)
+ │    └─ workflow: 发现妙记 →[读 ledger 去重,跳过已 DONE]
+ │                 → 生成 → 独立 checker 打分(<阈值则回灌缺口重写) → 建档
+ │                 → 通知 → 写 _result.json
+ ├─ 失败告警(未登录/出错 → 飞书消息;已修 set -e 死代码,告警真正可达)
+ ├─ 读 _result.json → 确定性追加去重台账 + 刷新 state.md   ← 不交给 AI
+ └─ 从当天节点把文档确定性拉回本地备份                ← 不交给 AI
+```
+
+**loop-engine 闭环要素:** 🧠 状态/去重台账(`.loop-engine/processed.tsv` + `state.md`)+ ⑤ 生成者≠检查者(独立 checker 按停止条件打分、不达标自动重写)。
+
+## 卸载 / 打包分发
+
+```bash
+./uninstall.sh           # 移除定时任务 + workflow,保留数据与配置
+./uninstall.sh --purge   # 连 config.sh 与 .loop-engine 一起删(二次确认)
+./dist.sh                # 干净打包成 zip(git archive,自动排除含 open_id 的 config.sh)
 ```

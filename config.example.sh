@@ -19,7 +19,13 @@ OPEN_ID="在此填入你的_open_id_ou_xxx"
 MINUTE_HOST="https://你的域名.feishu.cn"
 
 # 5) 本地归档根目录(按天分子目录存纪要副本)
-BASE_DIR="$HOME/Documents/会议纪要"
+#    loop 状态文件也放在它下面的 .loop-engine/(processed.tsv 去重台账 + state.md)
+BASE_DIR="$HOME/会议纪要"
 
-# 6) workflow 脚本要放到的位置(CC 命名 workflow 目录,一般不用改)
-WORKFLOW_DIR="$HOME/.claude/workflows"
+# 6) checker 质量校验阈值(0-100)。每篇纪要由独立 checker 打分,低于此值会自动重写;
+#    REDRAFT_MAX = 额外重写次数(1 = 最多写 2 稿),仍不过则带「⚠️ 待复核」标记归档。
+#    BLOCKED_GIVEUP = 同一篇取不到产物(BLOCKED)当天最多重试几次,达到后当天放弃,
+#                     不再每次心跳空跑(高频 */2 心跳下很重要)。
+MIN_SCORE=80
+REDRAFT_MAX=1
+BLOCKED_GIVEUP=3
