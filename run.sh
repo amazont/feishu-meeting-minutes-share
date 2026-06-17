@@ -91,9 +91,21 @@ elif [ "$RC" -ne 0 ]; then
   echo "[warn] 运行器退出码 $RC,但已检测到 _result.json,判定 workflow 已完成(疑似 stepcode 反馈问卷干扰),按成功处理。" >> "$LOG" 2>&1
 fi
 
-# 5) 确定性把当天节点下的文档拉回本地(不依赖 agent 写盘)
-"$LARK" wiki +node-list --space-id "$SPACE_ID" --parent-node-token "$DAY_NODE" --page-all --format json 2>>"$LOG" \
-  | LARK="$LARK" DAY="$DAY" LOCAL_DIR="$LOCAL_DIR" python3 -c "
+# 5) 读 _result.json:始终更新去重台账/state(廉价,含 BLOCKED 放弃计数),并取本次成功归档数
+COUNT=0
+if [ -f "$RESULT" ]; then
+  python3 "$HERE/update_state.py" update "$RESULT" "$DAY" "$LEDGER" "$STATE_MD" "$STAMP" "$MIN_SCORE" "$BLOCKED_GIVEUP" >> "$LOG" 2>&1 \
+    || echo "[state] update_state.py 执行失败(详见上)" >> "$LOG" 2>&1
+  COUNT="$(python3 -c "import json
+try: print(int((json.load(open('$RESULT')).get('count') or 0)))
+except Exception: print(0)" 2>/dev/null)"; COUNT="${COUNT:-0}"
+fi
+
+# 6) 仅当本次有成功归档(= 发了飞书通知)时:拉回备份 + 保留本次日志。
+#    无新增 / 纯 BLOCKED 的静默成功:不拉备份、删掉本次日志(按需求:只在失败或成功推送时留日志)。
+if [ "$COUNT" -gt 0 ]; then
+  "$LARK" wiki +node-list --space-id "$SPACE_ID" --parent-node-token "$DAY_NODE" --page-all --format json 2>>"$LOG" \
+    | LARK="$LARK" DAY="$DAY" LOCAL_DIR="$LOCAL_DIR" python3 -c "
 import sys,json,os,re,subprocess
 d=json.load(sys.stdin); day=os.environ['DAY']; ld=os.environ['LOCAL_DIR']; lark=os.environ['LARK']
 for n in (d.get('data') or {}).get('nodes') or []:
@@ -106,13 +118,8 @@ for n in (d.get('data') or {}).get('nodes') or []:
     except Exception: c=''
     if c: open(out,'w').write(c); print('[backup] '+out)
 " >> "$LOG" 2>&1
-
-# 6) 读 workflow 落盘的 _result.json → 确定性追加去重台账 + 刷新人读 state.md
-if [ -f "$LOCAL_DIR/_result.json" ]; then
-  python3 "$HERE/update_state.py" update "$LOCAL_DIR/_result.json" "$DAY" "$LEDGER" "$STATE_MD" "$STAMP" "$MIN_SCORE" "$BLOCKED_GIVEUP" >> "$LOG" 2>&1 \
-    || echo "[state] update_state.py 执行失败(详见上)" >> "$LOG" 2>&1
+  echo "[done] $STAMP 完成,归档 $COUNT 篇" >> "$LOG" 2>&1
 else
-  echo "[state] 未找到 _result.json,跳过台账/state 更新(workflow 可能未正常返回)" >> "$LOG" 2>&1
+  # 静默成功:本次不留日志(失败分支在第 4 步已 exit 1,日志保留)
+  rm -f "$LOG"
 fi
-
-echo "[done] $STAMP 完成" >> "$LOG" 2>&1
