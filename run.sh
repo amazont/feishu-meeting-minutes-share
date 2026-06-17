@@ -24,6 +24,10 @@ command -v node    >/dev/null 2>&1 || { echo "❌ 未找到 node(workflow 运行
 if command -v sc >/dev/null 2>&1; then RUN=(sc claude); elif command -v claude >/dev/null 2>&1; then RUN=(claude); else echo "❌ 未找到 sc 或 claude"; exit 1; fi
 
 LOG_DIR="$BASE_DIR/_logs"; mkdir -p "$LOG_DIR"
+# 并发互斥:workflow 偶尔 >2 分钟而 cron 为 */2,可能两实例重叠抢同一 _result.json/目录。
+# flock 非阻塞锁:已有实例在跑则静默跳过本轮(在建 LOG 之前退出,不留残档/不告警)。
+exec 9>"$LOG_DIR/.run.lock"
+flock -n 9 || exit 0
 # 日志轮转:清理 14 天前的运行日志
 find "$LOG_DIR" -name 'daily-minutes_*.log' -mtime +14 -delete 2>/dev/null || true
 STAMP="$(date +%Y-%m-%d_%H%M%S)"; DAY="$(date +%Y-%m-%d)"
@@ -68,7 +72,7 @@ echo "[dedup] 跳过 token: ${SKIP_TOKENS:-(无)}" >> "$LOG" 2>&1
 #    ⚠️ 用 set +e 包住运行器调用:否则运行器非零退出时 set -e 会抢先终止,
 #    导致下面的 RC 捕获与飞书告警(第 4 步)成为永远到不了的死代码。
 set +e
-"${RUN[@]}" -p "用 Workflow 工具运行命名 workflow「daily-meeting-minutes」(name: \"daily-meeting-minutes\"),args 设为 {\"dayNode\":\"$DAY_NODE\",\"localDir\":\"$LOCAL_DIR\",\"openId\":\"$OPEN_ID\",\"minuteHost\":\"$MINUTE_HOST\",\"skipTokens\":\"$SKIP_TOKENS\",\"minScore\":$MIN_SCORE,\"redraftMax\":$REDRAFT_MAX}。完成后简要汇报。" \
+"${RUN[@]}" -p "用 Workflow 工具运行命名 workflow「daily-meeting-minutes」(name: \"daily-meeting-minutes\"),args 设为 {\"dayNode\":\"$DAY_NODE\",\"localDir\":\"$LOCAL_DIR\",\"openId\":\"$OPEN_ID\",\"minuteHost\":\"$MINUTE_HOST\",\"skipTokens\":\"$SKIP_TOKENS\",\"minScore\":$MIN_SCORE,\"redraftMax\":$REDRAFT_MAX}。完成后简要汇报。然后务必另起一行,以 ===RESULT_JSON=== 开头,紧跟 Workflow 工具返回的 JSON 单行原样(禁止代码块/省略/改写任何字段)。" \
   --permission-mode bypassPermissions < /dev/null >> "$LOG" 2>&1
 RC=$?
 set -e
@@ -79,13 +83,41 @@ echo "===== 结束 退出码 $RC =====" >> "$LOG" 2>&1
 #    拿不到输入会以 130 退出 —— 这是假失败。workflow 每次都落 _result.json 作为完成契约,
 #    且本脚本开跑前已 rm 掉它,所以"跑完后存在 _result.json"= 本次真正跑到了结尾。
 RESULT="$LOCAL_DIR/_result.json"
+# 4.0) 若 workflow 的 agent 未能落 _result.json,则从运行日志的 ===RESULT_JSON=== 哨兵行确定性重建(shell 落盘,不依赖 AI 写文件)
+if [ ! -f "$RESULT" ]; then
+  python3 - "$LOG" "$RESULT" << 'PYJSON' >> "$LOG" 2>&1 || true
+import sys, json, re
+log_path, out_path = sys.argv[1], sys.argv[2]
+txt = open(log_path, encoding="utf-8", errors="ignore").read()
+hits = re.findall(r"===RESULT_JSON===\s*(.+)", txt)
+if hits:
+    raw = hits[-1].strip().strip("`").strip()
+    obj = None
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        e = raw.rfind("}")
+        if e >= 0:
+            try: obj = json.loads(raw[:e+1])
+            except Exception: obj = None
+    if isinstance(obj, dict) and "date" in obj:
+        json.dump(obj, open(out_path, "w", encoding="utf-8"), ensure_ascii=False)
+        print("[contract] 已从 ===RESULT_JSON=== 哨兵行确定性重建 _result.json")
+PYJSON
+fi
 if grep -q "Not logged in" "$LOG"; then
   "$LARK" im +messages-send --user-id "$OPEN_ID" --text "⚠️ 会议纪要任务失败($STAMP):运行器未登录,请运行一次 ${RUN[*]} 重新登录。日志:$LOG" >> "$LOG" 2>&1
   exit 1
 elif [ ! -f "$RESULT" ]; then
-  # 没有完成契约 → workflow 没跑到结尾,是真失败
-  "$LARK" im +messages-send --user-id "$OPEN_ID" --text "⚠️ 会议纪要任务失败($STAMP):workflow 未完成(无 _result.json,退出码 $RC)。日志:$LOG" >> "$LOG" 2>&1
-  exit 1
+  # 无 _result.json:区分"真失败"与"高频心跳空跑"(无新增;workflow 静默完成但 agent 未落契约文件)
+  if grep -qiE "ENOSPC|no space left|Failed to run agent|Not logged in|131006|无法获得当天节点|无法创建知识库" "$LOG" \
+     || ! grep -qE "===RESULT_JSON===|静默跳过|无需处理|没有需要处理|处理妙记数|未发现.*妙记|0 篇" "$LOG"; then
+    "$LARK" im +messages-send --user-id "$OPEN_ID" --text "⚠️ 会议纪要任务失败($STAMP):workflow 未完成(无 _result.json,退出码 $RC)。日志:$LOG" >> "$LOG" 2>&1
+    exit 1
+  fi
+  echo "[warn] 空跑静默成功:无新增妙记,workflow 已完成但未落 _result.json(高频心跳静默),不告警。" >> "$LOG" 2>&1
+  rm -f "$LOG"
+  exit 0
 elif [ "$RC" -ne 0 ]; then
   # 有完成契约但退出码非零 → 多半是 sc 反馈问卷收尾干扰,记一行、按成功继续,不告警
   echo "[warn] 运行器退出码 $RC,但已检测到 _result.json,判定 workflow 已完成(疑似 stepcode 反馈问卷干扰),按成功处理。" >> "$LOG" 2>&1
