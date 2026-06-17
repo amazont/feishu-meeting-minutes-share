@@ -59,11 +59,13 @@ lark-cli auth login --scope "contact:user.base:readonly minutes:minutes.search:r
 ```
 
 它会:建当天本地目录 + 知识库当天节点 → 调起 workflow 生成纪要 → 失败告警 → 把文档拉回本地。
-日志在 `~/会议纪要/_logs/`(或 `config.sh` 里 `BASE_DIR` 指向的目录)。
+日志在 `$BASE_DIR/_logs/`(`config.sh` 的 `BASE_DIR`,默认 `~/会议纪要/`)。
+**注意降噪策略**:仅在「失败」或「本次有成功归档(count>0,发了通知)」时才保留日志;无新增 / 全部跳过的静默心跳**不留日志、不发通知**(去重台账与 `state.md` 仍会更新)。所以高频定时下 `_logs/` 多数时候是空的,属正常。
 
-验证结果:
+验证结果(看最近一条有意义的日志,或直接看完成契约):
 ```bash
-LOG=$(ls -t ~/会议纪要/_logs/daily-minutes_*.log 2>/dev/null | head -1); cat "$LOG"
+LOG=$(ls -t "$BASE_DIR"/_logs/daily-minutes_*.log 2>/dev/null | head -1); [ -n "$LOG" ] && cat "$LOG" || echo "无近期日志(说明最近都是无新增的静默心跳)"
+cat "$BASE_DIR/$(date +%F)/_result.json" 2>/dev/null   # 每次跑都会写的完成契约
 ```
 - 看到「生成 N 篇」+「退出码 0」+ 知识库出现「会议纪要/<今天>」节点及文档 → 成功。
 - **「0 篇」不是错误**:可能今天还没会议妙记(会议没开 / 妙记没生成完),晚点再跑即可。
