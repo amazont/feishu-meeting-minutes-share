@@ -74,11 +74,21 @@ RC=$?
 set -e
 echo "===== 结束 退出码 $RC =====" >> "$LOG" 2>&1
 
-# 4) 失败告警(未登录/非零退出)
-if [ "$RC" -ne 0 ] || grep -q "Not logged in" "$LOG"; then
-  REASON="退出码 $RC"; grep -q "Not logged in" "$LOG" && REASON="运行器未登录,请运行一次 ${RUN[*]} 重新登录"
-  "$LARK" im +messages-send --user-id "$OPEN_ID" --text "⚠️ 会议纪要任务失败($STAMP):$REASON。日志:$LOG" >> "$LOG" 2>&1
+# 4) 成败判定:以 workflow 是否真完成为准,而不是看运行器退出码。
+#    背景:stepcode(sc)有时在 workflow 干完后的收尾阶段弹"反馈问卷",非交互(cron)下
+#    拿不到输入会以 130 退出 —— 这是假失败。workflow 每次都落 _result.json 作为完成契约,
+#    且本脚本开跑前已 rm 掉它,所以"跑完后存在 _result.json"= 本次真正跑到了结尾。
+RESULT="$LOCAL_DIR/_result.json"
+if grep -q "Not logged in" "$LOG"; then
+  "$LARK" im +messages-send --user-id "$OPEN_ID" --text "⚠️ 会议纪要任务失败($STAMP):运行器未登录,请运行一次 ${RUN[*]} 重新登录。日志:$LOG" >> "$LOG" 2>&1
   exit 1
+elif [ ! -f "$RESULT" ]; then
+  # 没有完成契约 → workflow 没跑到结尾,是真失败
+  "$LARK" im +messages-send --user-id "$OPEN_ID" --text "⚠️ 会议纪要任务失败($STAMP):workflow 未完成(无 _result.json,退出码 $RC)。日志:$LOG" >> "$LOG" 2>&1
+  exit 1
+elif [ "$RC" -ne 0 ]; then
+  # 有完成契约但退出码非零 → 多半是 sc 反馈问卷收尾干扰,记一行、按成功继续,不告警
+  echo "[warn] 运行器退出码 $RC,但已检测到 _result.json,判定 workflow 已完成(疑似 stepcode 反馈问卷干扰),按成功处理。" >> "$LOG" 2>&1
 fi
 
 # 5) 确定性把当天节点下的文档拉回本地(不依赖 agent 写盘)

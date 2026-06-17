@@ -94,9 +94,11 @@ const discovery = await agent(
 )
 
 if (!discovery.minutes || discovery.minutes.length === 0) {
-  // 高频心跳(如每 2 分钟)下,无新增时保持静默:不发飞书通知、不起额外 agent,
-  // 只记一行日志,避免刷屏。真正有新增时才在 Notify 阶段汇总通知。
-  log(`${discovery.date}: 无需处理的新妙记(无妙记或均已 DONE),静默跳过。`)
+  // 高频心跳(如每 2 分钟)下,无新增时保持静默:不发飞书通知。
+  // 但仍写 _result.json 作为"完成契约"——wrapper 据此判定本次真正跑完,
+  // 避免被 stepcode 收尾反馈问卷导致的假退出码(130)误判为失败。
+  log(`${discovery.date}: 无需处理的新妙记(无妙记或均已 DONE/跳过),静默跳过。`)
+  await persist({ date: discovery.date, dayNode: DAY_NODE, total: 0, count: 0, docs: [], blocked: [] })
   return { date: discovery.date, count: 0, docs: [] }
 }
 
