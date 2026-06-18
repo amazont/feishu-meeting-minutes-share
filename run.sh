@@ -40,20 +40,33 @@ STATE_DIR="$BASE_DIR/.loop-engine"; mkdir -p "$STATE_DIR"
 LEDGER="$STATE_DIR/processed.tsv"; touch "$LEDGER"
 STATE_MD="$STATE_DIR/state.md"
 
+# 失败告警:① 以机器人(bot)身份发,保持「机器人发通知」的观感;② 限流——同一天 + 同一 reason-key
+#           最多发 1 次,避免 cron 高频下同种错误 320 连发刷屏。标记落 .alerts/<DAY>_<key>,跨天自动复位。
+ALERT_DIR="$STATE_DIR/.alerts"; mkdir -p "$ALERT_DIR"
+alert() {  # $1=reason-key(短标识)  $2=要发的文本
+  local mark="$ALERT_DIR/${DAY}_$1"
+  if [ -f "$mark" ]; then
+    echo "[alert] 今日已就「$1」告警过,抑制本次(限流)。" >> "$LOG" 2>&1
+    return 0
+  fi
+  "$LARK" im +messages-send --as bot --user-id "$OPEN_ID" --text "$2" >> "$LOG" 2>&1
+  : > "$mark"
+}
+
 # 1) 本地当天目录
 LOCAL_DIR="$BASE_DIR/$DAY"; mkdir -p "$LOCAL_DIR"
 rm -f "$LOCAL_DIR/_result.json"  # 清理上次结果,避免误读旧数据
 
 # 2) 确定性建/复用知识库当天容器节点(按标题查重,幂等)
 DAY_TITLE="$DAY 会议纪要"
-DAY_NODE="$("$LARK" wiki +node-list --space-id "$SPACE_ID" --parent-node-token "$WIKI_ROOT" --page-all --format json 2>/dev/null \
+DAY_NODE="$("$LARK" wiki +node-list --as user --space-id "$SPACE_ID" --parent-node-token "$WIKI_ROOT" --page-all --format json 2>/dev/null \
   | python3 -c "import sys,json
 try: d=json.load(sys.stdin)
 except: sys.exit(0)
 for it in (d.get('data') or {}).get('nodes') or []:
     if it.get('title')=='$DAY_TITLE': print(it.get('node_token')); break" 2>/dev/null)"
 if [ -z "$DAY_NODE" ]; then
-  DAY_NODE="$("$LARK" wiki +node-create --space-id "$SPACE_ID" --parent-node-token "$WIKI_ROOT" --title "$DAY_TITLE" --obj-type docx --format json 2>>"$LOG" \
+  DAY_NODE="$("$LARK" wiki +node-create --as user --space-id "$SPACE_ID" --parent-node-token "$WIKI_ROOT" --title "$DAY_TITLE" --obj-type docx --format json 2>>"$LOG" \
     | python3 -c "import sys,json
 try: d=json.load(sys.stdin)
 except: sys.exit(0)
@@ -63,7 +76,7 @@ else
   echo "[setup] 复用当天节点: $DAY_NODE" >> "$LOG" 2>&1
 fi
 [ -z "$DAY_NODE" ] && { echo "[setup] ❌ 无法获得当天节点 token,终止" >> "$LOG" 2>&1; \
-  "$LARK" im +messages-send --user-id "$OPEN_ID" --text "⚠️ 会议纪要任务失败($STAMP):无法创建知识库当天节点" >> "$LOG" 2>&1; exit 1; }
+  alert nodefail "⚠️ 会议纪要任务失败($STAMP):无法创建知识库当天节点" >> "$LOG" 2>&1; exit 1; }
 
 # 3) headless 跑 workflow,把 dayNode/localDir/openId/minuteHost/skipTokens/minScore 通过指令传入
 #    去重判定在 bash 端确定性完成:已建文档的永久跳过、当天 BLOCKED 满 BLOCKED_GIVEUP 次的当天放弃
@@ -106,13 +119,13 @@ if hits:
 PYJSON
 fi
 if grep -q "Not logged in" "$LOG"; then
-  "$LARK" im +messages-send --user-id "$OPEN_ID" --text "⚠️ 会议纪要任务失败($STAMP):运行器未登录,请运行一次 ${RUN[*]} 重新登录。日志:$LOG" >> "$LOG" 2>&1
+  alert notloggedin "⚠️ 会议纪要任务失败($STAMP):运行器未登录,请运行一次 ${RUN[*]} 重新登录。日志:$LOG" >> "$LOG" 2>&1
   exit 1
 elif [ ! -f "$RESULT" ]; then
   # 无 _result.json:区分"真失败"与"高频心跳空跑"(无新增;workflow 静默完成但 agent 未落契约文件)
   if grep -qiE "ENOSPC|no space left|Failed to run agent|Not logged in|131006|无法获得当天节点|无法创建知识库" "$LOG" \
      || ! grep -qE "===RESULT_JSON===|静默跳过|无需处理|没有需要处理|处理妙记数|未发现.*妙记|0 篇" "$LOG"; then
-    "$LARK" im +messages-send --user-id "$OPEN_ID" --text "⚠️ 会议纪要任务失败($STAMP):workflow 未完成(无 _result.json,退出码 $RC)。日志:$LOG" >> "$LOG" 2>&1
+    alert wf_incomplete "⚠️ 会议纪要任务失败($STAMP):workflow 未完成(无 _result.json,退出码 $RC)。日志:$LOG" >> "$LOG" 2>&1
     exit 1
   fi
   echo "[warn] 空跑静默成功:无新增妙记,workflow 已完成但未落 _result.json(高频心跳静默),不告警。" >> "$LOG" 2>&1
@@ -136,7 +149,7 @@ fi
 # 6) 仅当本次有成功归档(= 发了飞书通知)时:拉回备份 + 保留本次日志。
 #    无新增 / 纯 BLOCKED 的静默成功:不拉备份、删掉本次日志(按需求:只在失败或成功推送时留日志)。
 if [ "$COUNT" -gt 0 ]; then
-  "$LARK" wiki +node-list --space-id "$SPACE_ID" --parent-node-token "$DAY_NODE" --page-all --format json 2>>"$LOG" \
+  "$LARK" wiki +node-list --as user --space-id "$SPACE_ID" --parent-node-token "$DAY_NODE" --page-all --format json 2>>"$LOG" \
     | LARK="$LARK" DAY="$DAY" LOCAL_DIR="$LOCAL_DIR" python3 -c "
 import sys,json,os,re,subprocess
 d=json.load(sys.stdin); day=os.environ['DAY']; ld=os.environ['LOCAL_DIR']; lark=os.environ['LARK']
@@ -145,7 +158,7 @@ for n in (d.get('data') or {}).get('nodes') or []:
     if not obj: continue
     safe=re.sub(r'[\\\\/:*?\"<>|\\s]+','_',title)[:40]
     out=os.path.join(ld, f'{day}_{safe}.md')
-    r=subprocess.run([lark,'docs','+fetch','--api-version','v2','--doc',obj,'--format','json'],capture_output=True,text=True)
+    r=subprocess.run([lark,'docs','+fetch','--as','user','--api-version','v2','--doc',obj,'--format','json'],capture_output=True,text=True)
     try: c=((json.loads(r.stdout).get('data') or {}).get('document') or {}).get('content','')
     except Exception: c=''
     if c: open(out,'w').write(c); print('[backup] '+out)

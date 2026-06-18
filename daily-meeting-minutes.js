@@ -188,7 +188,7 @@ ${CRITERIA}
   const pub = await agent(
     `把本地 markdown 文件建成飞书知识库文档(挂当天节点下),机械步骤不改内容。
 1. cd 到目录建文档(--content 必须相对路径;+create 不支持 --title/--format,标题取自 markdown 首行 #):
-   cd "${LOCAL_DIR}" && lark-cli docs +create --api-version v2 --parent-token ${DAY_NODE} --doc-format markdown --content @./${fname}
+   cd "${LOCAL_DIR}" && lark-cli docs +create --as user --api-version v2 --parent-token ${DAY_NODE} --doc-format markdown --content @./${fname}
 2. 从返回 data.document.url 取链接。
 3. 最后一个动作必须按 schema 返回 {url}。`,
     { label: `publish:${tail}`, phase: 'Publish', schema: {
@@ -216,7 +216,7 @@ if (ok.length > 0) {
   const tail = blocked.length > 0 ? `\\n\\n❌ 另有 ${blocked.length} 篇未能归档(取不到产物或建档失败),下次心跳会自动重试。` : ''
   await agent(
     `发飞书通知:
-lark-cli im +messages-send --user-id ${OPEN_ID} --markdown "**📋 当日会议纪要已生成(${discovery.date},${ok.length}/${results.length} 篇归档)**\\n\\n${lines}${tail}"`,
+lark-cli im +messages-send --as bot --user-id ${OPEN_ID} --markdown "**📋 当日会议纪要已生成(${discovery.date},${ok.length}/${results.length} 篇归档)**\\n\\n${lines}${tail}"`,
     { phase: 'Notify' }
   )
 } else {
