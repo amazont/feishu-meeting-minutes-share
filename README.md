@@ -19,6 +19,8 @@
 
 2. **Claude Code（或 stepcode `sc`）** —— 装好并登录一次即可（`claude` 或 `sc claude`）。
 
+> ⚠️ **知识库写操作走「你本人(user)」身份**(建当天节点、建文档)：飞书知识库对机器人默认无编辑权限(会报 `131006`),所以必须保持上面的 `lark-cli auth login`(user)授权有效。**user token 过期/被收回时**,定时任务会建节点失败。本包已内置 `auth-healthcheck.sh` 每天自检(见下文),失效会提前发飞书提醒你重新授权。
+
 ## 第 2 步：一键初始化
 
 ```bash
@@ -66,6 +68,8 @@ crontab -l | grep daily-meeting-minutes
 
 - **init 报"拿不到 open_id / 解析失败"** → 飞书授权没给全，按它打印的 `lark-cli auth login --scope ...` 补一下再重跑 `./init.sh`。
 - **run 报"未登录"** → 跑一次 `claude`（或 `sc claude`）登录一下。脚本会自动识别用哪个。
+- **报"无法创建知识库当天节点"/ `131006`** → user 身份 token 失效(知识库写需 user 权限,机器人会被拒)。重新授权:`lark-cli auth login --domain wiki,docs`(交互式扫码),完成后 `auth-healthcheck.sh` 探测通过即恢复。**告警已限流**:同种错误一天最多发 1 条,不会再像旧版每 2 分钟刷屏。
+- **每日权限自检** → `auth-healthcheck.sh` 建议挂一条 cron(如每天 10 点)提前发现 user token 失效:`0 10 * * * /bin/bash <本包目录>/auth-healthcheck.sh`。正常静默,异常才发飞书提醒。
 - **某天没跑成** → 多半是登录态问题，`run.sh` 会自动发飞书告警提示你。
 - **同一天重复跑** → 已支持跨运行去重(`.loop-engine/processed.tsv`):只跳过已成功的妙记,**不再产生重复文档**;上次失败/待复核的会自动重试。
 - **某篇带「⚠️ 待复核」** → checker 打分低于 `MIN_SCORE` 且重写后仍不达标,已归档但建议人工看一眼;缺口记在 `.loop-engine/state.md`。
@@ -78,15 +82,23 @@ crontab -l | grep daily-meeting-minutes
 ```
 run.sh(确定性 bash)
  ├─ 依赖/PATH 自检(lark-cli/python3/node/sc) + 日志轮转
- ├─ 建/复用 本地当天目录 + 知识库当天节点          ← 不交给 AI
+ ├─ flock 并发互斥锁:已有实例在跑则静默跳过本轮(防高频心跳重叠抢资源)
+ ├─ 建/复用 本地当天目录 + 知识库当天节点(--as user 身份)   ← 不交给 AI
  ├─ (sc) claude -p 调起 workflow(传 dayNode/localDir/ledger/minScore…)
  │    └─ workflow: 发现妙记 →[读 ledger 去重,跳过已 DONE]
- │                 → 生成 → 独立 checker 打分(<阈值则回灌缺口重写) → 建档
- │                 → 通知 → 写 _result.json
- ├─ 失败告警(未登录/出错 → 飞书消息;已修 set -e 死代码,告警真正可达)
+ │                 → 生成 → 独立 checker 打分(<阈值则回灌缺口重写) → 建档(--as user)
+ │                 → 通知 → 返回结构化结果(并打印 ===RESULT_JSON=== 哨兵行)
+ ├─ 完成契约:优先用 workflow 落的 _result.json;缺失则从日志的
+ │            ===RESULT_JSON=== 哨兵行**确定性 shell 重建**(不依赖 AI 写文件)
+ ├─ 失败告警(未登录/131006/出错 → 飞书消息):**按「天+错误类型」限流,同种一天最多 1 条**
  ├─ 读 _result.json → 确定性追加去重台账 + 刷新 state.md   ← 不交给 AI
- └─ 从当天节点把文档确定性拉回本地备份                ← 不交给 AI
+ └─ 从当天节点把文档确定性拉回本地备份(--as user)        ← 不交给 AI
+
+auth-healthcheck.sh(建议每天 cron 跑一次)
+ └─ 自检 lark-cli user 身份 ready + 实探知识库可读;失效则发飞书提醒重授权(正常静默)
 ```
+
+**为什么 `_result.json` 走哨兵行?** 它既是「本次真跑完」的完成契约,又是去重台账的数据源(含每篇 token/verdict)。早期靠 workflow 内 AI agent 用 Write 工具落盘,不可靠(空跑时常写不成,导致 run.sh 误判失败刷屏)。现在 workflow 把结果原样打印为 `===RESULT_JSON===` 一行,run.sh 用 shell 确定性解析落盘——AI 只负责「复制一行」,杜绝误报。
 
 **loop-engine 闭环要素:** 🧠 状态/去重台账(`.loop-engine/processed.tsv` + `state.md`)+ ⑤ 生成者≠检查者(独立 checker 按停止条件打分、不达标自动重写)。
 
