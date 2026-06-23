@@ -84,18 +84,60 @@ SKIP_TOKENS="$(python3 "$HERE/update_state.py" skip "$LEDGER" "$DAY" "$BLOCKED_G
 echo "[dedup] 跳过 token: ${SKIP_TOKENS:-(无)}" >> "$LOG" 2>&1
 #    ⚠️ 用 set +e 包住运行器调用:否则运行器非零退出时 set -e 会抢先终止,
 #    导致下面的 RC 捕获与飞书告警(第 4 步)成为永远到不了的死代码。
+# 运行器 prompt 抽成变量,便于瞬时错误重试时复用(避免重复维护长指令)。
+PROMPT="用 Workflow 工具运行命名 workflow「daily-meeting-minutes」(name: \"daily-meeting-minutes\"),args 设为 {\"dayNode\":\"$DAY_NODE\",\"localDir\":\"$LOCAL_DIR\",\"openId\":\"$OPEN_ID\",\"minuteHost\":\"$MINUTE_HOST\",\"skipTokens\":\"$SKIP_TOKENS\",\"minScore\":$MIN_SCORE,\"redraftMax\":$REDRAFT_MAX}。完成后简要汇报。然后务必另起一行,以 ===RESULT_JSON=== 开头,紧跟 Workflow 工具返回的 JSON 单行原样(禁止代码块/省略/改写任何字段)。"
+RESULT="$LOCAL_DIR/_result.json"
+
+# 瞬时错误自动重试:仅当本轮命中「模型网关 5xx / 连接抖动」且本轮未落 _result.json 时才重试,
+#   最多 RETRY_MAX 次(默认 2,即总计最多 3 次尝试),每次退避 RETRY_SLEEP 秒。
+#   背景:偶发 `API Error: Internal server error` 会让 agent 0 工具调用即退出码 1,
+#         触发"workflow 未完成"误报告警;此前只能等下一班次兜底,这里改为就地快速重试。
+#   命中硬错误(未登录/磁盘满/lark 131006)立即停止重试 —— 这些重试也没用,交给第 4 步如实告警。
+RETRY_MAX="${RETRY_MAX:-2}"; RETRY_SLEEP="${RETRY_SLEEP:-20}"
+TRANSIENT_RE='Internal server error|API Error|Overloaded|overloaded_error|(^|[^0-9])50[234]([^0-9]|$)|ECONNRESET|ETIMEDOUT|socket hang up|fetch failed|network error|Service Unavailable|Bad Gateway|Gateway Time'
+HARD_RE='Not logged in|ENOSPC|no space left|131006|无法获得当天节点|无法创建知识库'
+# workflow「真跑到结尾」的证据:落了 ===RESULT_JSON=== 契约哨兵行,或日志含空跑静默成功标志词
+#   (与第 4 步白名单保持一致)。用于识别「退出码 0 但模型空补全」这类退化轮——模型偶发返回
+#   空补全(0 工具调用、根本没运行 workflow)同样会退出码 0,但既无契约也无标志词,不能当成功。
+DONE_RE='===RESULT_JSON===|静默跳过|无需处理|没有需要处理|处理妙记数|未发现.*妙记|0 篇'
 set +e
-"${RUN[@]}" -p "用 Workflow 工具运行命名 workflow「daily-meeting-minutes」(name: \"daily-meeting-minutes\"),args 设为 {\"dayNode\":\"$DAY_NODE\",\"localDir\":\"$LOCAL_DIR\",\"openId\":\"$OPEN_ID\",\"minuteHost\":\"$MINUTE_HOST\",\"skipTokens\":\"$SKIP_TOKENS\",\"minScore\":$MIN_SCORE,\"redraftMax\":$REDRAFT_MAX}。完成后简要汇报。然后务必另起一行,以 ===RESULT_JSON=== 开头,紧跟 Workflow 工具返回的 JSON 单行原样(禁止代码块/省略/改写任何字段)。" \
-  --permission-mode bypassPermissions < /dev/null >> "$LOG" 2>&1
-RC=$?
+attempt=0
+while :; do
+  attempt=$((attempt+1))
+  rm -f "$RESULT"   # 每轮开跑前清空契约文件,避免误读上一轮残档
+  ATTEMPT_LOG="$(mktemp "${TMPDIR:-/tmp}/dms_attempt.XXXXXX")"
+  "${RUN[@]}" -p "$PROMPT" --permission-mode bypassPermissions < /dev/null > "$ATTEMPT_LOG" 2>&1
+  RC=$?
+  cat "$ATTEMPT_LOG" >> "$LOG"   # 本轮输出汇入主日志(末尾哨兵行供第 4.0 步重建契约)
+  # 收工条件:已落完成契约,或(退出码 0 且日志有 workflow 真跑过的证据)。
+  #   ⚠️ 不再把「退出码 0」单独当成功 —— 模型偶发空补全也会 0 工具调用、退出码 0,
+  #      那种轮次没有契约/标志词,必须落到下面的空补全重试,而不是误判为成功 break。
+  if [ -f "$RESULT" ] || { [ "$RC" -eq 0 ] && grep -qE "$DONE_RE" "$ATTEMPT_LOG"; }; then rm -f "$ATTEMPT_LOG"; break; fi
+  # 硬错误 → 重试无意义,立即停止,交给第 4 步告警
+  if grep -qiE "$HARD_RE" "$ATTEMPT_LOG"; then rm -f "$ATTEMPT_LOG"; break; fi
+  # 空补全/退化轮:退出码 0 但既无契约又无任何完成标志词 ⇒ 本轮 workflow 根本没跑起来(模型吐了空)。
+  #   skipTokens 不变、workflow 幂等,退避后重跑即可自愈,避免 12:58 那类「退出码0空跑」误报。
+  if [ "$attempt" -le "$RETRY_MAX" ] && [ "$RC" -eq 0 ] && [ ! -f "$RESULT" ] && ! grep -qE "$DONE_RE" "$ATTEMPT_LOG"; then
+    echo "[retry] 第 $attempt 次尝试为空补全(退出码0但未运行 workflow/无哨兵行),退避 ${RETRY_SLEEP}s 后重试(上限 $RETRY_MAX 次)" >> "$LOG" 2>&1
+    rm -f "$ATTEMPT_LOG"; sleep "$RETRY_SLEEP"; continue
+  fi
+  # 命中瞬时错误 且 仍有重试额度 → 退避后重跑(skipTokens 不变,workflow 幂等)
+  if [ "$attempt" -le "$RETRY_MAX" ] && grep -qiE "$TRANSIENT_RE" "$ATTEMPT_LOG"; then
+    echo "[retry] 第 $attempt 次尝试命中瞬时错误(网关5xx/连接抖动),退避 ${RETRY_SLEEP}s 后重试(上限 $RETRY_MAX 次)" >> "$LOG" 2>&1
+    rm -f "$ATTEMPT_LOG"; sleep "$RETRY_SLEEP"; continue
+  fi
+  # 非瞬时错误 或 额度耗尽 → 退出循环,交给第 4 步判定
+  rm -f "$ATTEMPT_LOG"; break
+done
 set -e
+[ "$attempt" -gt 1 ] && echo "[retry] 本次共尝试 $attempt 次" >> "$LOG" 2>&1
 echo "===== 结束 退出码 $RC =====" >> "$LOG" 2>&1
 
 # 4) 成败判定:以 workflow 是否真完成为准,而不是看运行器退出码。
 #    背景:stepcode(sc)有时在 workflow 干完后的收尾阶段弹"反馈问卷",非交互(cron)下
 #    拿不到输入会以 130 退出 —— 这是假失败。workflow 每次都落 _result.json 作为完成契约,
 #    且本脚本开跑前已 rm 掉它,所以"跑完后存在 _result.json"= 本次真正跑到了结尾。
-RESULT="$LOCAL_DIR/_result.json"
+# RESULT 路径已在运行器调用前定义
 # 4.0) 若 workflow 的 agent 未能落 _result.json,则从运行日志的 ===RESULT_JSON=== 哨兵行确定性重建(shell 落盘,不依赖 AI 写文件)
 if [ ! -f "$RESULT" ]; then
   python3 - "$LOG" "$RESULT" << 'PYJSON' >> "$LOG" 2>&1 || true
