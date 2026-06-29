@@ -32,7 +32,12 @@
    lark-cli auth login --scope "contact:user.base:readonly minutes:minutes.search:read minutes:minutes.artifacts:read minutes:minutes.transcript:export wiki:node:retrieve wiki:node:create docx:document:create im:message.send_as_user drive:drive.metadata:readonly vc:note:read"
    ```
 
-2. **Claude Code（或 stepcode `sc`）** —— 装好并登录一次即可（`claude` 或 `sc claude`）。
+2. **Claude Code（或 stepcode `sc`）** —— 二选一，装好并登录一次即可。
+   ```bash
+   npm i -g @anthropic-ai/claude-code   # Claude Code 官方 CLI
+   claude                                # 首次启动并登录（或改用 stepcode：sc claude）
+   ```
+   > 文档：https://docs.claude.com/claude-code 。本包的 `run.sh` 会自动识别系统里装的是 `claude` 还是 `sc claude`，无需手动指定。
 
 > ⚠️ **知识库写操作走「你本人(user)」身份**(建当天节点、建文档)：飞书知识库对机器人默认无编辑权限(会报 `131006`),所以必须保持上面的 `lark-cli auth login`(user)授权有效。**user token 过期/被收回时**,定时任务会建节点失败。本包已内置 `auth-healthcheck.sh` 每天自检(见下文),失效会提前发飞书提醒你重新授权。
 
