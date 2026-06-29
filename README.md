@@ -32,7 +32,7 @@
    lark-cli auth login --scope "contact:user.base:readonly minutes:minutes.search:read minutes:minutes.artifacts:read minutes:minutes.transcript:export wiki:node:retrieve wiki:node:create docx:document:create im:message.send_as_user drive:drive.metadata:readonly vc:note:read"
    ```
 
-2. **Claude Code（或 stepcode `sc`）** —— 二选一，装好并登录一次即可。
+2. **Claude Code（或 stepcode ）** —— 二选一，装好并登录一次即可。
    ```bash
    npm i -g @anthropic-ai/claude-code   # Claude Code 官方 CLI
    claude                                # 首次启动并登录（或改用 stepcode：sc claude）
