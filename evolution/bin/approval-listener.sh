@@ -55,6 +55,11 @@ trap cleanup EXIT
 DECISION=""
 exec 6<"$PIPE"
 while IFS= read -r msg <&6; do
+  # lark-cli --jq 输出为 JSON 编码字符串,剥掉首尾引号与转义
+  msg="$(printf '%s' "$msg" | python3 -c 'import json,sys
+s=sys.stdin.read().strip()
+try: print(json.loads(s) if s.startswith("\"") else s)
+except Exception: print(s)')"
   echo "[listener] 收到: $msg"
   # 消息里出现周号(20xx-Wxx / Wxx)时必须匹配本轮,否则忽略并提示
   ref_week="$(printf '%s' "$msg" | grep -oiE '20[0-9]{2}-?W[0-9]{1,2}' | head -1 | tr 'w' 'W')"

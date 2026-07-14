@@ -94,7 +94,7 @@ crontab -l | sed 's|<PKG>/run.sh|<PKG>/releases/current/run.sh|' | crontab -
 
 | 开关 | 默认 | 含义 |
 |---|---|---|
-| `evolution/HUMAN_GATE` | **开**(已创建) | 周进化判 MERGE 时不自动合入,发飞书通知等你人工 `evolution/bin/weekly-evolve.sh --apply <周号>` 放行;连跑 2 轮无纠错后可删除转全自动 |
+| `evolution/HUMAN_GATE` | **开**(已创建) | 周进化判 MERGE 时不自动合入,机器人发飞书通知并**订阅你的回复**:直接回复「同意 <周号>」即合入、「拒绝 <周号>」即放弃(72h 有效,由 `approval-listener.sh` 经 `lark-cli event consume` 实现,只认你的 open_id、只匹配白名单指令);超时后仍可远端 `weekly-evolve.sh --apply <周号>`。连跑 2 轮无纠错后可删除本文件转全自动 |
 | `evolution/AUTO_ROLLBACK` | 关 | 哨兵检测到新版本 24h 内连续 3 次失败时**自动**切回上一版本;建议观察 2 天无误报后 `touch` 启用(未启用时只发告警) |
 | `evolution/FROZEN` | 关 | 进化平面熔断:存在时每日评估/每周进化直接跳过;回滚发生时自动创建,排查完删除解冻 |
 
