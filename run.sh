@@ -32,6 +32,11 @@ flock -n 9 || exit 0
 find "$LOG_DIR" -name 'daily-minutes_*.log' -mtime +14 -delete 2>/dev/null || true
 STAMP="$(date +%Y-%m-%d_%H%M%S)"; DAY="$(date +%Y-%m-%d)"
 LOG="$LOG_DIR/daily-minutes_$STAMP.log"
+# 进化体系哨兵:run 结束时上报退出码(releases/vX/ 快照内跑时,sentinel 状态统一记在仓库根)。
+# 全程防御式:sentinel 不存在/失败都不影响生产退出码。zsh/bash 兼容。
+ROOT="$HERE"
+case "$HERE" in */releases/*) ROOT="${HERE%%/releases/*}";; esac
+trap '[ -x "$ROOT/evolution/bin/sentinel.sh" ] && "$ROOT/evolution/bin/sentinel.sh" "$?" >/dev/null 2>&1 || true' EXIT
 cd "$HOME"
 echo "===== 启动 $STAMP =====" >> "$LOG" 2>&1
 
@@ -85,7 +90,9 @@ echo "[dedup] 跳过 token: ${SKIP_TOKENS:-(无)}" >> "$LOG" 2>&1
 #    ⚠️ 用 set +e 包住运行器调用:否则运行器非零退出时 set -e 会抢先终止,
 #    导致下面的 RC 捕获与飞书告警(第 4 步)成为永远到不了的死代码。
 # 运行器 prompt 抽成变量,便于瞬时错误重试时复用(避免重复维护长指令)。
-PROMPT="用 Workflow 工具运行命名 workflow「daily-meeting-minutes」(name: \"daily-meeting-minutes\"),args 设为 {\"dayNode\":\"$DAY_NODE\",\"localDir\":\"$LOCAL_DIR\",\"openId\":\"$OPEN_ID\",\"minuteHost\":\"$MINUTE_HOST\",\"skipTokens\":\"$SKIP_TOKENS\",\"minScore\":$MIN_SCORE,\"redraftMax\":$REDRAFT_MAX}。完成后简要汇报。然后务必另起一行,以 ===RESULT_JSON=== 开头,紧跟 Workflow 工具返回的 JSON 单行原样(禁止代码块/省略/改写任何字段)。"
+#   ⚠️ 用 scriptPath 直接指向本目录的 js(而非 ~/.claude/workflows 命名副本),
+#      使 releases/vX 快照完全自包含,进化晋升切换时代码与 prompt/rubric 同步生效。
+PROMPT="用 Workflow 工具运行 {\"scriptPath\":\"$HERE/daily-meeting-minutes.js\",\"args\":{\"dayNode\":\"$DAY_NODE\",\"localDir\":\"$LOCAL_DIR\",\"openId\":\"$OPEN_ID\",\"minuteHost\":\"$MINUTE_HOST\",\"skipTokens\":\"$SKIP_TOKENS\",\"minScore\":$MIN_SCORE,\"redraftMax\":$REDRAFT_MAX,\"rubricFile\":\"$HERE/config/checker-rubric.md\"}}。完成后简要汇报。然后务必另起一行,以 ===RESULT_JSON=== 开头,紧跟 Workflow 工具返回的 JSON 单行原样(禁止代码块/省略/改写任何字段)。"
 RESULT="$LOCAL_DIR/_result.json"
 
 # 瞬时错误自动重试:仅当本轮命中「模型网关 5xx / 连接抖动」且本轮未落 _result.json 时才重试,
