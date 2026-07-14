@@ -18,7 +18,7 @@
 
 > 每篇由独立 checker 按覆盖度 / 正确性 / 排版打分（默认阈值 `MIN_SCORE=80`），低于阈值会按缺口自动重写后再归档。
 
-> **只需 3 步，配置全自动，不用手填任何值。**
+> **只需 3 步，配置全自动，不用手填任何值。**（进阶:第 4 步可选启用[评估与自进化体系](#第-4-步可选启用评估与自进化体系)）
 
 ---
 
@@ -63,6 +63,42 @@ cd <本包目录>
 成功标志：飞书知识库出现「会议纪要 / <今天日期>」节点 + 其下若干文档，并收到飞书通知。
 日志在 `$BASE_DIR/_logs/`(默认 `~/会议纪要/_logs/`)。为降噪,**仅在「失败」或「本次有成功归档(发了通知)」时才保留日志**;无新增 / 全部跳过的静默心跳不留日志。
 > 高频定时(如每 2 分钟)+ 担心磁盘:把 `config.sh` 的 `BASE_DIR` 指到大磁盘(如 `/data/会议纪要`),日志、去重台账、本地备份都会落在那里。
+
+---
+
+## 第 4 步(可选)：启用评估与自进化体系
+
+前 3 步已经是完整可用的系统。这一步把 [evolution/ 平面](#评估与自进化体系可选evolution)也跑起来——每日复评纪要质量、每周自动提改进并回归验证。**前提:本目录是 git 仓库(从 GitHub clone 即满足;zip 分发的先 `git init && git add -A && git commit -m init`)。**
+
+```bash
+cd <本包目录>
+
+# 4.1 打首个不可变快照,releases/current 指向它(之后生产只跑快照,进化只在 worktree 改)
+evolution/bin/promote.sh
+
+# 4.2 生产定时任务改跑快照(Linux cron;把 <PKG> 换成本包绝对路径)
+crontab -l | sed 's|<PKG>/run.sh|<PKG>/releases/current/run.sh|' | crontab -
+#     macOS launchd:编辑 ~/Library/LaunchAgents/com.example.daily-meeting-minutes.plist,
+#     把 ProgramArguments 里的 run.sh 路径同样改成 releases/current/run.sh 后 launchctl 重载。
+
+# 4.3 挂评估(每日 22:35)与进化(每周日 14:05)定时任务(Linux;BASE_DIR 与 config.sh 一致)
+( crontab -l
+  echo '35 22 * * * /bin/bash <PKG>/evolution/bin/daily-eval.sh >> <BASE_DIR>/_logs/cron-daily-eval.log 2>&1 # dmm-daily-eval'
+  echo '5 14 * * 0 /bin/bash <PKG>/evolution/bin/weekly-evolve.sh >> <BASE_DIR>/_logs/cron-weekly-evolve.log 2>&1 # dmm-weekly-evolve'
+) | crontab -
+```
+
+验证:手动跑一次 `evolution/bin/daily-eval.sh`(对最近有纪要的一天可传日期参数,如 `daily-eval.sh 2026-07-13`),应生成 `evolution/eval-reports/<日期>.json` 并在 `evolution/golden/cases/` 落下 golden 候选。
+
+三个你该知道的安全开关(都是"文件存在即生效"):
+
+| 开关 | 默认 | 含义 |
+|---|---|---|
+| `evolution/HUMAN_GATE` | **开**(已创建) | 周进化判 MERGE 时不自动合入,发飞书通知等你人工 `evolution/bin/weekly-evolve.sh --apply <周号>` 放行;连跑 2 轮无纠错后可删除转全自动 |
+| `evolution/AUTO_ROLLBACK` | 关 | 哨兵检测到新版本 24h 内连续 3 次失败时**自动**切回上一版本;建议观察 2 天无误报后 `touch` 启用(未启用时只发告警) |
+| `evolution/FROZEN` | 关 | 进化平面熔断:存在时每日评估/每周进化直接跳过;回滚发生时自动创建,排查完删除解冻 |
+
+golden set 维护:`evolution/golden/cases/<token>/meta.json` 里 `status: candidate` 的样本,人工看过 `reference.md` 没问题后改成 `approved`,回归基准更可信。想撤销这一切:`evolution/bin/rollback.sh` 切回旧版,cron 改回直跑 `run.sh` 即可,数据无迁移。
 
 ---
 
@@ -143,7 +179,7 @@ auth-healthcheck.sh(建议每天 cron 跑一次)
 - **人工门禁**:`evolution/HUMAN_GATE` 存在时,MERGE 需人工 `weekly-evolve.sh --apply <周>` 放行;`evolution/FROZEN` 存在时进化平面熔断。
 - **不可重放输入的回归**:妙记是当天数据,golden set(`evolution/golden/cases/<token>/` 逐字稿+认可纪要)在评估时自动采样固化,离线回归随时可跑。
 
-启用方式:`evolution/bin/promote.sh` 打首个快照并把 cron 指向 `releases/current/run.sh`,再把 `daily-eval.sh`(每日)与 `weekly-evolve.sh`(每周)挂上 cron。不启用时,evolution/ 目录对原有链路零影响。
+启用方式见上文[「第 4 步(可选)」](#第-4-步可选启用评估与自进化体系)。不启用时,evolution/ 目录对原有链路零影响。
 
 ## 卸载 / 打包分发
 
