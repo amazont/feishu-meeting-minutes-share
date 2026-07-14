@@ -122,6 +122,29 @@ auth-healthcheck.sh(建议每天 cron 跑一次)
 
 **loop-engine 闭环要素:** 🧠 状态/去重台账(`.loop-engine/processed.tsv` + `state.md`)+ ⑤ 生成者≠检查者(独立 checker 按停止条件打分、不达标自动重写)。
 
+## 评估与自进化体系(可选,evolution/)
+
+在生成链路之上,本包还带一套按 Anthropic 工程博客《[Harness design for long-running application development](https://www.anthropic.com/engineering/harness-design-long-running-apps)》(Planner-Generator-Evaluator 三 Agent + 对抗式验收)设计的**评估 + 自进化平面**,让系统自己发现质量缺口、自己改进自己,且改不坏生产:
+
+```
+生产平面(每2分钟)   cron → releases/current/run.sh(不可变 git 快照,promote.sh 原子切链)
+评估平面(每日22:35) daily-eval.sh → meta-evaluator 盲评复评当天纪要(C1-C4 更严苛
+                    + C5幻觉 + C6遗漏) → eval-reports/*.json(checker 校准偏差) → golden 采样
+进化平面(周日14:05) weekly-evolve.sh:Planner(读一周评估报告挑1个单变量改进,写合约)
+                    → Generator(git worktree 内实施) → 离线回归(golden set,js 的
+                    offlineInput/dryRun 模式) → Evaluator(默认 REJECT,逐门槛验收)
+                    → MERGE 则晋升快照 / REJECT 记 backlog
+哨兵                sentinel.sh:新版本 24h 内连续 3 次失败 → 告警/自动切回 previous
+```
+
+关键安全设计:
+- **生产只跑快照**:`releases/current` 软链指向 git archive 导出的不可变目录,进化 agent 只在 worktree 折腾;回滚 = 秒级切软链,不依赖任何 AI 在线。
+- **改尺子防作弊**:回归打分用 pin 版 meta-evaluator;单变量强制(每周只改一个组件);checker rubric 外置在 `config/checker-rubric.md`,改 rubric = 单文件 diff。
+- **人工门禁**:`evolution/HUMAN_GATE` 存在时,MERGE 需人工 `weekly-evolve.sh --apply <周>` 放行;`evolution/FROZEN` 存在时进化平面熔断。
+- **不可重放输入的回归**:妙记是当天数据,golden set(`evolution/golden/cases/<token>/` 逐字稿+认可纪要)在评估时自动采样固化,离线回归随时可跑。
+
+启用方式:`evolution/bin/promote.sh` 打首个快照并把 cron 指向 `releases/current/run.sh`,再把 `daily-eval.sh`(每日)与 `weekly-evolve.sh`(每周)挂上 cron。不启用时,evolution/ 目录对原有链路零影响。
+
 ## 卸载 / 打包分发
 
 ```bash
