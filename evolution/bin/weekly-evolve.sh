@@ -238,8 +238,12 @@ echo "[evolve] 裁决: $VERDICT"
 if [ "$VERDICT" = "MERGE" ]; then
   if [ -f "$EVO/HUMAN_GATE" ]; then
     log_changelog "$WEEK" "MERGE_PENDING_HUMAN" "$HYP"
-    notify "🧬 会议纪要进化 $WEEK 验收通过(MERGE),等待人工放行。假设:$HYP。放行命令:远端执行 evolution/bin/weekly-evolve.sh --apply $WEEK;产物见 evolution/runs/$WEEK/"
-    echo "[evolve] HUMAN_GATE 存在,已通知等待人工 --apply $WEEK。"
+    # 免 ssh 放行通道:启动飞书指令监听器(订阅用户发给机器人的消息,72h 有效)
+    nohup "$EVO/bin/approval-listener.sh" "$WEEK" >> "$RUN_DIR/listener.log" 2>&1 &
+    notify "🧬 会议纪要进化 $WEEK 验收通过(MERGE),等待人工放行。假设:$HYP。
+👉 直接回复本机器人「同意 $WEEK」立即合入,或「拒绝 $WEEK」放弃(72 小时内有效);
+也可远端执行 evolution/bin/weekly-evolve.sh --apply $WEEK。产物:evolution/runs/$WEEK/"
+    echo "[evolve] HUMAN_GATE 存在,已通知并启动飞书指令监听器,等待人工放行 $WEEK。"
   else
     apply_merge "$WEEK" || { log_changelog "$WEEK" "MERGE_APPLY_FAILED" "$HYP"; exit 1; }
   fi
