@@ -19,6 +19,8 @@ evolution/.fail_count
 evolution/.promoted_at
 evolution/.sentinel_alerted_*
 evolution/FROZEN
+evolution/HUMAN_GATE
+evolution/AUTO_ROLLBACK
 evolution/state.json
 evolution/changelog.jsonl
 evolution/backlog.yaml
