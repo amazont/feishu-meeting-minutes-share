@@ -122,9 +122,9 @@ crontab -l | grep daily-meeting-minutes
 
 ## 常见问题
 
-- **init 报"拿不到 open_id / 解析失败"** → 飞书授权没给全，按它打印的 `lark-cli auth login --scope ...` 补一下再重跑 `./init.sh`。
+- **init 报"拿不到 open_id / 解析失败"** → 飞书授权没给全。让 AI 助手(Claude Code/Codex)按 CLAUDE.md/AGENTS.md 的「Device Flow 标准流程」发起授权并给你二维码,扫一下即可;也可自己跑它打印的 `lark-cli auth login --scope ...`。补完重跑 `./init.sh`。
 - **run 报"未登录"** → 跑一次 `claude`（或 `sc claude`）登录一下。脚本会自动识别用哪个。
-- **报"无法创建知识库当天节点"/ `131006`** → user 身份 token 失效(知识库写需 user 权限,机器人会被拒)。重新授权:`lark-cli auth login --domain wiki,docs`(交互式扫码),完成后 `auth-healthcheck.sh` 探测通过即恢复。**告警已限流**:同种错误一天最多发 1 条,不会再像旧版每 2 分钟刷屏。
+- **报"无法创建知识库当天节点"/ `131006`** → user 身份 token 失效(知识库写需 user 权限,机器人会被拒)。重新授权:最省事是让 AI 助手按「Device Flow 标准流程」(`auth login --no-wait` + 二维码)递给你扫;也可自己跑 `lark-cli auth login --domain wiki,docs`(交互式扫码)。完成后 `auth-healthcheck.sh` 探测通过即恢复。**告警已限流**:同种错误一天最多发 1 条,不会再像旧版每 2 分钟刷屏。
 - **每日权限自检** → `auth-healthcheck.sh` 建议挂一条 cron(如每天 10 点)提前发现 user token 失效:`0 10 * * * /bin/bash <本包目录>/auth-healthcheck.sh`。正常静默,异常才发飞书提醒。
 - **某天没跑成** → 多半是登录态问题，`run.sh` 会自动发飞书告警提示你。
 - **同一天重复跑** → 已支持跨运行去重(`.loop-engine/processed.tsv`):只跳过已成功的妙记,**不再产生重复文档**;上次失败/待复核的会自动重试。
