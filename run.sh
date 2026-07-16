@@ -103,6 +103,8 @@ RESULT="$LOCAL_DIR/_result.json"
 RETRY_MAX="${RETRY_MAX:-2}"; RETRY_SLEEP="${RETRY_SLEEP:-20}"
 TRANSIENT_RE='Internal server error|API Error|Overloaded|overloaded_error|(^|[^0-9])50[234]([^0-9]|$)|ECONNRESET|ETIMEDOUT|socket hang up|fetch failed|network error|Service Unavailable|Bad Gateway|Gateway Time'
 HARD_RE='Not logged in|ENOSPC|no space left|131006|无法获得当天节点|无法创建知识库'
+# 额度/预算池耗尽(模型 API 402):非瞬时、非可自愈——重试只会继续撞 402 并烧额度,单独识别。
+QUOTA_RE='Budget pool quota exceeded|exceeds quota limit|quota_type=(monthly|daily)|insufficient_quota|Monthly cost exceeds|余额不足|quota exceeded'
 # workflow「真跑到结尾」的证据:落了 ===RESULT_JSON=== 契约哨兵行,或日志含空跑静默成功标志词
 #   (与第 4 步白名单保持一致)。用于识别「退出码 0 但模型空补全」这类退化轮——模型偶发返回
 #   空补全(0 工具调用、根本没运行 workflow)同样会退出码 0,但既无契约也无标志词,不能当成功。
@@ -122,6 +124,8 @@ while :; do
   if [ -f "$RESULT" ] || { [ "$RC" -eq 0 ] && grep -qE "$DONE_RE" "$ATTEMPT_LOG"; }; then rm -f "$ATTEMPT_LOG"; break; fi
   # 硬错误 → 重试无意义,立即停止,交给第 4 步告警
   if grep -qiE "$HARD_RE" "$ATTEMPT_LOG"; then rm -f "$ATTEMPT_LOG"; break; fi
+  # 额度/预算池耗尽(402)→ 每次调用都会 402,重试纯属浪费且继续烧额度,立即停止,交给第 4 步专项告警
+  if grep -qiE "$QUOTA_RE" "$ATTEMPT_LOG"; then echo "[quota] 命中算力预算池额度耗尽(402),停止重试" >> "$LOG" 2>&1; rm -f "$ATTEMPT_LOG"; break; fi
   # 空补全/退化轮:退出码 0 但既无契约又无任何完成标志词 ⇒ 本轮 workflow 根本没跑起来(模型吐了空)。
   #   skipTokens 不变、workflow 幂等,退避后重跑即可自愈,避免 12:58 那类「退出码0空跑」误报。
   if [ "$attempt" -le "$RETRY_MAX" ] && [ "$RC" -eq 0 ] && [ ! -f "$RESULT" ] && ! grep -qE "$DONE_RE" "$ATTEMPT_LOG"; then
@@ -169,6 +173,10 @@ PYJSON
 fi
 if grep -q "Not logged in" "$LOG"; then
   alert notloggedin "⚠️ 会议纪要任务失败($STAMP):运行器未登录,请运行一次 ${RUN[*]} 重新登录。日志:$LOG" >> "$LOG" 2>&1
+  exit 1
+elif [ ! -f "$RESULT" ] && grep -qiE "$QUOTA_RE" "$LOG"; then
+  # 算力预算池额度耗尽:准确定性告警(独立限流键 quota,每天最多一条),额度重置/提额后自动恢复
+  alert quota "⚠️ 会议纪要暂停($STAMP):算力预算池月度额度已用尽(模型 API 402 / budget pool quota exceeded),纪要暂时无法生成;额度重置或提额后自动恢复,期间不再重复刷屏。日志:$LOG" >> "$LOG" 2>&1
   exit 1
 elif [ ! -f "$RESULT" ]; then
   # 无 _result.json:区分"真失败"与"高频心跳空跑"(无新增;workflow 静默完成但 agent 未落契约文件)
