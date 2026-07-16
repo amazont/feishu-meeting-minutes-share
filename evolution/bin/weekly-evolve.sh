@@ -32,13 +32,34 @@ PYEOF
 
 run_llm() {  # $1=prompt $2=输出文件 $3=工作目录(可选)
   local d="${3:-$ROOT}"
-  if command -v sc >/dev/null 2>&1; then
-    (cd "$d" && timeout 1800 sc claude -p "$1" --permission-mode bypassPermissions) > "$2" 2>&1 < /dev/null
-  elif command -v claude >/dev/null 2>&1; then
-    (cd "$d" && timeout 1800 claude -p "$1" --permission-mode bypassPermissions) > "$2" 2>&1 < /dev/null
-  else
-    echo "no claude/sc available" > "$2"; return 127
+  local rundir; rundir="$(dirname "$2")"
+  local runner=""
+  if command -v sc >/dev/null 2>&1; then runner="sc claude"
+  elif command -v claude >/dev/null 2>&1; then runner="claude"
+  else echo "no claude/sc available" > "$2"; return 127; fi
+
+  # ── 执行沙箱(Layer 1)──────────────────────────────────────────
+  # 仅 Linux 且 systemd-run --user 可用、未显式 HARDEN_DISABLE=1 时启用。
+  # 已验证配方见 evolution/bin/shadow-sandbox-test.sh:
+  #   NoNewPrivileges 封 sudo/setuid(含 crontab);ReadOnlyPaths=$ROOT 锁仓库树;
+  #   ReadWritePaths 仅放开 worktree/.git/runner 目录;InaccessiblePaths 切断飞书凭证+生产数据。
+  # 三个 agent(Planner/Generator/Evaluator)共用本函数,一处加固全覆盖。
+  # 无 systemd(Mac 本地开发)或探测失败时回退原行为,保证"最坏=这周没进化"不被沙箱破坏。
+  if [ "${HARDEN_DISABLE:-0}" != "1" ] && command -v systemd-run >/dev/null 2>&1 \
+     && systemd-run --user --pipe --wait --quiet -p Description=hardenprobe true >/dev/null 2>&1; then
+    local RW_RUNNER="$HOME/.claude $HOME/.stepcode /data/.stepcode-sessions /data/.stepcode-logs /data/.stepcode-ux-plan /tmp"
+    local rwargs="" blk="" p
+    for p in "$d" "$ROOT/.git" "$rundir" $RW_RUNNER; do [ -e "$p" ] && rwargs="$rwargs -p ReadWritePaths=$p"; done
+    for p in "$HOME/.lark-cli" "$BASE_DIR"; do [ -e "$p" ] && blk="$blk -p InaccessiblePaths=$p"; done
+    ( cd "$d" && timeout 1830 systemd-run --user --pipe --wait --quiet \
+        -p NoNewPrivileges=yes -p ProtectSystem=strict -p ReadOnlyPaths="$ROOT" \
+        -p MemoryMax=3G -p CPUQuota=200% -p TasksMax=256 \
+        $rwargs $blk \
+        timeout 1800 $runner -p "$1" --permission-mode bypassPermissions ) > "$2" 2>&1 < /dev/null
+    return
   fi
+  # 回退:无沙箱(Mac 本地 / 无 systemd / 探测失败)
+  ( cd "$d" && timeout 1800 $runner -p "$1" --permission-mode bypassPermissions ) > "$2" 2>&1 < /dev/null
 }
 
 extract_json() {  # $1=raw文件 $2=哨兵标记 $3=输出json  → rc0=成功
