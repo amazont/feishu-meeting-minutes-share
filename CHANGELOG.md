@@ -15,6 +15,7 @@
   - `config/checker-rubric.md`:C1/C2/C4 改为按「看板画板非空 + 看板 `<text>` 结论忠实于源妙记」评分。
   - `evolution/prompts/meta-evaluator/prompt.md`(进化守则 DO-NOT-TOUCH pin 版,**人工签署改动**):
     C1 明确纯画板是预期设计、不按空壳 fail;C5 幻觉核查提示回溯 SVG `<text>` 内的结论文字。
+  - `README.md`:纪要结构说明中「总结/一句话结论」改述为核心结论看板画板。
 
 ### Notes
 - 实测验证:按上述 SVG 规范建档→导出画板 PNG,渲染为「结论带 + 彩色卡片 + 带标签时间线」,中文不溢出、无渲染异常。
