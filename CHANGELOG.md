@@ -4,6 +4,15 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 最新版本在最上方;每次发布都在顶部追加一条。（本文件自 2026-07-17 起维护,更早的历史以 git 提交记录为准。）
 
+## [1.1.1] - 2026-07-20
+
+### Added
+- `.gitignore` 屏蔽 `minutes/` —— `lark-cli minutes +detail --transcript` 会在 cwd 落 `minutes/<token>/transcript.txt`(含会议逐字稿),防止误入库。
+- README 常见问题新增「单独重跑某一篇(含历史)纪要」的操作说明(导出逐字稿 → offlineInput 生成 → docs +create 发布替换 → 更新 ledger 链接)。
+
+### Notes
+- 本次为运维/文档整理,不改生成逻辑。触发点:用旧格式历史会议重跑为画板版时,发现逐字稿导出产物会落在仓库目录。
+
 ## [1.1.0] - 2026-07-17
 
 ### Changed

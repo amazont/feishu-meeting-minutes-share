@@ -25,3 +25,6 @@ evolution/state.json
 evolution/changelog.jsonl
 evolution/backlog.yaml
 __pycache__/
+
+# 妙记逐字稿导出产物(lark-cli minutes +detail --transcript 会在 cwd 落 minutes/<token>/transcript.txt)——含会议内容,禁止入库
+minutes/

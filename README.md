@@ -130,6 +130,7 @@ crontab -l | grep daily-meeting-minutes
 - **同一天重复跑** → 已支持跨运行去重(`.loop-engine/processed.tsv`):只跳过已成功的妙记,**不再产生重复文档**;上次失败/待复核的会自动重试。
 - **某篇带「⚠️ 待复核」** → checker 打分低于 `MIN_SCORE` 且重写后仍不达标,已归档但建议人工看一眼;缺口记在 `.loop-engine/state.md`。
 - **定时跑失败但手动能跑** → 多半是 launchd/cron 的 PATH 太干净找不到 lark-cli/node。本版已在 plist 注入 PATH + WorkingDirectory;Linux cron 用 `/bin/bash run.sh`,run.sh 也会自己补常见 PATH。
+- **想单独重跑某一篇(含历史)纪要** → 正常流程只扫「当天」妙记。要重跑某篇历史会议(如换用新排版重生成):导出该妙记逐字稿 → 以 `offlineInput`(离线回归模式)跑 workflow 生成 markdown → 再用 `lark-cli docs +create --parent-token <当天知识库节点>` 发布,替换旧档并更新 `.loop-engine/processed.tsv` 里该 token 的链接即可。注意 `lark-cli minutes +detail --transcript` 会在当前目录落 `minutes/<token>/transcript.txt`(含会议内容,已被 `.gitignore` 屏蔽,勿入库)。
 - **想改本地存放目录** → 编辑 `config.sh` 里的 `BASE_DIR`。
 - **想改质量阈值** → 编辑 `config.sh` 的 `MIN_SCORE` / `REDRAFT_MAX`。
 
