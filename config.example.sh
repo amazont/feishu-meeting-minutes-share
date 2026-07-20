@@ -29,3 +29,9 @@ BASE_DIR="$HOME/会议纪要"
 MIN_SCORE=80
 REDRAFT_MAX=1
 BLOCKED_GIVEUP=3
+
+# 7) (可选)AI 配图开关:1 = 每篇纪要按核心结论自动生成一张扁平风配图,
+#    插入到文档「一、一句话结论」画板前。依赖名为 gpt-image 的 MCP
+#    (claude mcp add gpt-image --scope user -- node <path>/gpt-image-mcp/index.js);
+#    MCP 未注册或生图失败时自动降级为无图发布,不影响纪要主流程。0 = 关闭。
+GEN_IMAGE=1

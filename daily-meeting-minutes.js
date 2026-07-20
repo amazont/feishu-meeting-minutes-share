@@ -6,7 +6,8 @@ export const meta = {
     { title: 'Discover', detail: 'minutes +search 拉取今日妙记,读 ledger 去重(跳过已 DONE)' },
     { title: 'Draft', detail: '每篇取 notes/逐字稿 → 生成结论前置式纪要 markdown 并写本地' },
     { title: 'Checker', detail: '独立只读 agent 按停止条件 C1–C4 打分,verdict<DONE 回灌缺口重写' },
-    { title: 'Publish', detail: '在当天节点下建知识库文档' },
+    { title: 'Illustrate', detail: '(可选,genImage 开启时)按纪要核心结论用 gpt-image MCP 生成配图' },
+    { title: 'Publish', detail: '在当天节点下建知识库文档(有配图则 media-insert 插入)' },
     { title: 'Notify', detail: '发飞书通知,附全部文档链接与 checker 分数' },
     { title: 'Persist', detail: '把结构化结果写 _result.json,供 wrapper 确定性落台账/刷 state' },
   ],
@@ -14,7 +15,7 @@ export const meta = {
 
 // ⚠️ 本脚本不含任何写死的个人配置。所有环境值由 wrapper 通过 args 传入:
 //    args = { dayNode, localDir, openId, minuteHost, skipTokens, minScore, redraftMax,
-//             rubricFile, offlineInput, dryRun }
+//             rubricFile, genImage, offlineInput, dryRun }
 //    - dayNode:    知识库当天容器节点 token(由 wrapper 用 bash 确定性创建/复用)
 //    - localDir:   本地当天目录(由 wrapper 预建);_result.json 也写在这里
 //    - openId:     飞书通知接收人 open_id
@@ -25,6 +26,9 @@ export const meta = {
 //    - redraftMax: 额外重写次数(默认 1,即最多 2 稿)
 //    - rubricFile: (可选)checker 评分标准外置文件路径;传入时 checker 以该文件内容为准,
 //                  未传或读不到时回退到脚本内置 CRITERIA。进化系统只改这个文件即可调 rubric。
+//    - genImage:   (可选)true 时在 Publish 前用 gpt-image MCP(mcp__gpt-image__generate_image)
+//                  按纪要核心结论生成一张配图,建档后 media-insert 插到「一、一句话结论」前。
+//                  生图/插图任何失败都不阻塞纪要主流程(降级为无图发布)。MCP 未注册时自动跳过。
 //    - offlineInput:(可选)离线回归模式:golden case 目录(每个子目录 <token>/ 含
 //                  transcript.md + meta.json)。启用后不调妙记 API、隐含 dryRun。
 //    - dryRun:     (可选)true 时跳过 Publish 建档与 Notify 通知,产出只落本地。
@@ -40,6 +44,7 @@ const RUBRIC_FILE = String(A.rubricFile || '').trim()
 const SKIP = String(A.skipTokens || '').split(',').map(s => s.trim()).filter(Boolean)
 const MIN_SCORE = Number(A.minScore) || 80
 const REDRAFT_MAX = Number.isFinite(Number(A.redraftMax)) ? Number(A.redraftMax) : 1
+const GEN_IMAGE = A.genImage === true || A.genImage === 'true'
 if (!A.localDir) {
   throw new Error('缺少 args.localDir。请通过 wrapper 脚本调用,不要直接裸跑。')
 }
@@ -269,13 +274,36 @@ ${CRITERIA}`
     return { token: m.token, title, url: `dryrun://${fname}`, score: v ? v.score : 0, verdict, gaps: (v && v.gaps) || [] }
   }
 
+  // Illustrate(可选):按纪要核心结论生成一张 AI 配图。失败不阻塞,imgFile 为空即降级为无图发布。
+  let imgFile = ''
+  if (GEN_IMAGE) {
+    const img = await agent(
+      `为一篇会议纪要生成配图(视觉摘要),用 gpt-image MCP。
+1. 用 Read 读取纪要 ${path},提炼这场会的核心结论与主题意象。
+2. 调用 MCP 工具 mcp__gpt-image__generate_image(工具列表里没有就先用 ToolSearch 检索 generate_image;检索仍找不到说明 MCP 未注册,直接放弃返回空)。参数:
+   - prompt:你提炼的中文画面描述——现代扁平风商务插画,主题呼应会议核心结论(协作/发布/增长/架构/评审等意象自选),浅色干净背景,构图简洁留白,**画面中不得出现任何文字/字母/数字**。
+   - size: "1536x1024",n: 1
+   - filename: "${discovery.date}_${tail}_cover"
+   - out_dir: "${LOCAL_DIR}"
+3. 工具返回文本里含保存路径,按 schema 返回 {file:"<png 绝对路径>"}。
+任何失败(工具不存在/接口报错/超时)最多再试 1 次,仍失败返回 {file:""}——绝不因配图卡住纪要发布。`,
+      { label: `image:${tail}`, phase: 'Illustrate', schema: {
+          type: 'object', properties: { file: { type:'string' } }, required: ['file']
+      }}
+    )
+    imgFile = (img && img.file) || ''
+    if (!imgFile) log(`配图生成失败或 MCP 不可用(${tail}),降级为无图发布`)
+  }
+
   // Publish(机械步骤,不改内容)
   const pub = await agent(
     `把本地 markdown 文件建成飞书知识库文档(挂当天节点下),机械步骤不改内容。
 1. cd 到目录建文档(--content 必须相对路径;+create 不支持 --title/--format,标题取自 markdown 首行 #):
    cd "${LOCAL_DIR}" && lark-cli docs +create --as user --api-version v2 --parent-token ${DAY_NODE} --doc-format markdown --content @./${fname}
-2. 从返回 data.document.url 取链接。
-3. 最后一个动作必须按 schema 返回 {url}。`,
+2. 从返回 data.document.url 取链接。${imgFile ? `
+3. 插入配图(⚠️ 本步失败只记录、不影响返回,文档已建成功就算成功;--file 只接受当前目录下的相对路径,必须先 cd):
+   cd "${LOCAL_DIR}" && lark-cli docs +media-insert --as user --doc "<第2步的url>" --file "./${imgFile.split('/').pop()}" --selection-with-ellipsis "一、一句话结论" --before --align center --caption "AI 配图 · 视觉摘要(自动生成)"` : ''}
+${imgFile ? '4' : '3'}. 最后一个动作必须按 schema 返回 {url}(第2步拿到的文档链接)。`,
     { label: `publish:${tail}`, phase: 'Publish', schema: {
         type: 'object', properties: { url:{type:'string'} }, required: ['url']
     }}

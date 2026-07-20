@@ -4,6 +4,23 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 最新版本在最上方;每次发布都在顶部追加一条。（本文件自 2026-07-17 起维护,更早的历史以 git 提交记录为准。）
 
+## [1.2.0] - 2026-07-20
+
+### Added
+- **每篇纪要可选 AI 配图(gpt-image MCP)**:新增 Illustrate 阶段——checker 通过后、建档前,
+  由 agent 读取纪要提炼核心结论,调用 `mcp__gpt-image__generate_image`(StepFun models-proxy 的
+  gpt-image-2)生成一张 1536x1024 扁平风视觉摘要配图(画面无文字),落在当天本地目录;
+  Publish 建档后用 `lark-cli docs +media-insert --selection-with-ellipsis "一、一句话结论" --before`
+  把图插到核心结论看板之前。
+  - `daily-meeting-minutes.js`:args 新增 `genImage`;新增 Illustrate 阶段与 Publish 插图步骤。
+  - `run.sh`:新增 `GEN_IMAGE` 开关(默认 1),经 args.genImage 注入 workflow。
+  - `config.example.sh`:新增第 7 节 GEN_IMAGE 说明。
+
+### Notes
+- **失败降级**:MCP 未注册、生图接口报错、media-insert 失败,均不阻塞纪要主流程(降级为无图发布,url 照常返回)。
+- checker rubric 不变:配图在建档后插入,不进入本地 markdown,C1–C4 评分口径不受影响。
+- 依赖:运行机需已注册 gpt-image MCP(user scope)且可达 models-proxy;bingzhe-01 已于 2026-07-20 部署验证。
+
 ## [1.1.1] - 2026-07-20
 
 ### Added
