@@ -4,6 +4,22 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 最新版本在最上方;每次发布都在顶部追加一条。（本文件自 2026-07-17 起维护,更早的历史以 git 提交记录为准。）
 
+## [1.4.0] - 2026-07-20
+
+### Added
+- **配图支持图文左右分栏排版**(观感对齐飞书妙记 AI 总结画板):新增规格文件
+  `config/image-layout-spec.md`,五步流程已在真实文档端到端验证——media-insert 插图 →
+  `+fetch --detail with-ids` 取 block id → `block_insert_after` 插空 grid 骨架(带占位块)→
+  `block_move_after` 把原文段落逐块移进左栏、图片块移进右栏(图片 token 与 caption 自动保留)→
+  `block_delete` 删占位。原有内容块只移动不重写;**唯一例外:配图覆盖的段落文字可适当精简**
+  (图/caption 已表达的细节收敛,只留判断与结论,block_replace 完成)。
+- `run.sh` 经 args.imageSpec 注入规格路径;workflow Publish prompt 引导 agent 读规格后自主执行,
+  图不适合分栏或分栏失败时退化为简单 media-insert 插入。
+
+### Notes
+- 分栏与精简都发生在建档后的文档上,本地 markdown 与 checker 评分口径不受影响。
+- width-ratio 服务端会归一化(实测 0.55/0.45 落地为 0.5/0.5);block id 在写操作后可能失效,规格已提示每步前重新 fetch。
+
 ## [1.3.0] - 2026-07-20
 
 ### Changed

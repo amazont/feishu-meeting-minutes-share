@@ -29,6 +29,9 @@ export const meta = {
 //                  (mcp__gpt-image__generate_image)。是否配图、配几张、插在哪,
 //                  由 agent 按纪要内容自行判断(0 张也正常);生图/插图任何失败都
 //                  不阻塞纪要主流程。MCP 未注册时自动跳过。
+//    - imageSpec:  (可选)图文分栏排版规格文件路径(config/image-layout-spec.md)。
+//                  传入且可读时,配图按规格排成左右分栏(grid 骨架→移块→删占位,
+//                  配图段落文字可适当精简);否则退化为简单 media-insert 插入。
 //    - offlineInput:(可选)离线回归模式:golden case 目录(每个子目录 <token>/ 含
 //                  transcript.md + meta.json)。启用后不调妙记 API、隐含 dryRun。
 //    - dryRun:     (可选)true 时跳过 Publish 建档与 Notify 通知,产出只落本地。
@@ -45,6 +48,7 @@ const SKIP = String(A.skipTokens || '').split(',').map(s => s.trim()).filter(Boo
 const MIN_SCORE = Number(A.minScore) || 80
 const REDRAFT_MAX = Number.isFinite(Number(A.redraftMax)) ? Number(A.redraftMax) : 1
 const GEN_IMAGE = A.genImage === true || A.genImage === 'true'
+const IMAGE_SPEC = String(A.imageSpec || '').trim()
 if (!A.localDir) {
   throw new Error('缺少 args.localDir。请通过 wrapper 脚本调用,不要直接裸跑。')
 }
@@ -282,14 +286,14 @@ ${CRITERIA}`
    cd "${LOCAL_DIR}" && lark-cli docs +create --as user --api-version v2 --parent-token ${DAY_NODE} --doc-format markdown --content @./${fname}
 2. 从返回 data.document.url 取链接。${GEN_IMAGE ? `
 3. (可选,由你自主判断)你具备 AI 生图能力:MCP 工具 mcp__gpt-image__generate_image(工具列表里没有就先用 ToolSearch 检索 generate_image;仍找不到说明未安装,静默跳过本步)。
-   读一遍这篇纪要,自行决定要不要配图、配几张(0–2 张为宜)、插在哪里:
-   - 值得配的信号:核心结论有鲜明意象、某个议题一张示意/氛围图能明显增强表达;
+   读一遍这篇纪要,自行决定要不要配图、配几张(0–2 张为宜)、配给哪个议题/段落:
+   - 值得配的信号:核心结论有鲜明意象、某个议题一张示意/分工/流程图能明显增强表达;
    - 不值得配:纯信息同步、内容单薄、想不出贴切画面 → 一张不配,直接跳过,这完全正常。
-   若决定配图:
-   - 生成:prompt 写你提炼的中文画面描述(现代扁平风商务插画,浅色干净背景,构图简洁,**画面中不得出现任何文字/字母/数字**),size 按位置自选(横幅 1536x1024/方图 1024x1024),out_dir="${LOCAL_DIR}",filename 自拟。
-   - 插入(⚠️ --file 只接受当前目录下的相对路径,必须先 cd;--selection-with-ellipsis 填你选定插入点所在块的文字片段):
-     cd "${LOCAL_DIR}" && lark-cli docs +media-insert --as user --doc "<第2步的url>" --file "./<生成的png文件名>" --selection-with-ellipsis "<插入点文字片段>" --before --align center --caption "<一句贴切的图注>"
-   - 任何失败(工具不存在/生图报错/插入报错)只记录、最多再试 1 次,然后放弃配图——绝不因配图影响建档结果。` : ''}
+   若决定配图:先生成——prompt 写你提炼的中文画面描述(现代扁平风商务插画,浅色干净背景,构图简洁,**画面中不得出现任何文字/字母/数字**),size 自选(横幅 1536x1024/方图 1024x1024),out_dir="${LOCAL_DIR}",filename 自拟。${IMAGE_SPEC ? `
+   然后用 Read 读取排版规格 ${IMAGE_SPEC},按其中五步流程把配图与对应文字排成**左右分栏**(插图→取 block id→插 grid 骨架→移块进栏→删占位;配图段落文字可按规格适当精简)。规格读不到、或该图不适合分栏、或分栏中途失败 → 退化为简单插入:cd "${LOCAL_DIR}" && lark-cli docs +media-insert --as user --doc "<第2步的url>" --file "./<png文件名>" --selection-with-ellipsis "<插入点文字片段>" --before --align center --caption "<一句图注>"(--file 只接受当前目录相对路径,必须先 cd)。` : `
+   然后插入(⚠️ --file 只接受当前目录下的相对路径,必须先 cd;--selection-with-ellipsis 填你选定插入点所在块的文字片段):
+     cd "${LOCAL_DIR}" && lark-cli docs +media-insert --as user --doc "<第2步的url>" --file "./<生成的png文件名>" --selection-with-ellipsis "<插入点文字片段>" --before --align center --caption "<一句贴切的图注>"`}
+   任何失败(工具不存在/生图报错/插入报错)只记录、最多再试 1 次,然后放弃配图——绝不因配图影响建档结果。` : ''}
 ${GEN_IMAGE ? '4' : '3'}. 最后一个动作必须按 schema 返回 {url}(第2步拿到的文档链接)。`,
     { label: `publish:${tail}`, phase: 'Publish', schema: {
         type: 'object', properties: { url:{type:'string'} }, required: ['url']

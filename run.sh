@@ -95,7 +95,7 @@ echo "[dedup] 跳过 token: ${SKIP_TOKENS:-(无)}" >> "$LOG" 2>&1
 # 运行器 prompt 抽成变量,便于瞬时错误重试时复用(避免重复维护长指令)。
 #   ⚠️ 用 scriptPath 直接指向本目录的 js(而非 ~/.claude/workflows 命名副本),
 #      使 releases/vX 快照完全自包含,进化晋升切换时代码与 prompt/rubric 同步生效。
-PROMPT="用 Workflow 工具运行 {\"scriptPath\":\"$HERE/daily-meeting-minutes.js\",\"args\":{\"dayNode\":\"$DAY_NODE\",\"localDir\":\"$LOCAL_DIR\",\"openId\":\"$OPEN_ID\",\"minuteHost\":\"$MINUTE_HOST\",\"skipTokens\":\"$SKIP_TOKENS\",\"minScore\":$MIN_SCORE,\"redraftMax\":$REDRAFT_MAX,\"rubricFile\":\"$HERE/config/checker-rubric.md\",\"genImage\":$GEN_IMAGE_JSON}}。完成后简要汇报。然后务必另起一行,以 ===RESULT_JSON=== 开头,紧跟 Workflow 工具返回的 JSON 单行原样(禁止代码块/省略/改写任何字段)。"
+PROMPT="用 Workflow 工具运行 {\"scriptPath\":\"$HERE/daily-meeting-minutes.js\",\"args\":{\"dayNode\":\"$DAY_NODE\",\"localDir\":\"$LOCAL_DIR\",\"openId\":\"$OPEN_ID\",\"minuteHost\":\"$MINUTE_HOST\",\"skipTokens\":\"$SKIP_TOKENS\",\"minScore\":$MIN_SCORE,\"redraftMax\":$REDRAFT_MAX,\"rubricFile\":\"$HERE/config/checker-rubric.md\",\"genImage\":$GEN_IMAGE_JSON,\"imageSpec\":\"$HERE/config/image-layout-spec.md\"}}。完成后简要汇报。然后务必另起一行,以 ===RESULT_JSON=== 开头,紧跟 Workflow 工具返回的 JSON 单行原样(禁止代码块/省略/改写任何字段)。"
 RESULT="$LOCAL_DIR/_result.json"
 
 # 瞬时错误自动重试:仅当本轮命中「模型网关 5xx / 连接抖动」且本轮未落 _result.json 时才重试,
