@@ -4,8 +4,8 @@
 <!-- 换成本包绝对路径、__BASE_DIR__ 换成本地归档目录(默认 ~/会议纪要)、 -->
 <!-- __PATH__ 换成你交互 shell 里 `echo $PATH` 的结果(关键!launchd 默认 PATH 极简, -->
 <!-- 不补这个会找不到 lark-cli/sc/node/python3 而静默失败)。 -->
-<!-- 频率二选一:每天定点用下面的 StartCalendarInterval;每隔 N 秒跑一次则改用 -->
-<!-- <key>StartInterval</key><integer>N秒</integer>(如每 4 小时 = 14400)。Linux 用 crontab,见 README。 -->
+<!-- 频率二选一:默认每 5 分钟订阅新增用下面的 StartInterval(秒);每天定点则改用 -->
+<!-- <key>StartCalendarInterval</key><dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>47</integer></dict>。Linux 用 crontab,见 README。 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -23,11 +23,7 @@
     </dict>
     <key>WorkingDirectory</key>
     <string>__SHARE_DIR__</string>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key><integer>18</integer>
-        <key>Minute</key><integer>47</integer>
-    </dict>
+    <key>StartInterval</key><integer>300</integer>
     <key>StandardOutPath</key>
     <string>__BASE_DIR__/_logs/launchd.out.log</string>
     <key>StandardErrorPath</key>

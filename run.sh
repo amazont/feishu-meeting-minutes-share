@@ -27,7 +27,7 @@ command -v node    >/dev/null 2>&1 || { echo "❌ 未找到 node(workflow 运行
 if command -v sc >/dev/null 2>&1; then RUN=(sc claude); elif command -v claude >/dev/null 2>&1; then RUN=(claude); else echo "❌ 未找到 sc 或 claude"; exit 1; fi
 
 LOG_DIR="$BASE_DIR/_logs"; mkdir -p "$LOG_DIR"
-# 并发互斥:workflow 偶尔 >2 分钟而 cron 为 */2,可能两实例重叠抢同一 _result.json/目录。
+# 并发互斥:workflow 偶尔比心跳间隔更长(高频心跳如 */5),可能两实例重叠抢同一 _result.json/目录。
 # flock 非阻塞锁:已有实例在跑则静默跳过本轮(在建 LOG 之前退出,不留残档/不告警)。
 exec 9>"$LOG_DIR/.run.lock"
 flock -n 9 || exit 0
@@ -61,6 +61,49 @@ alert() {  # $1=reason-key(短标识)  $2=要发的文本
   : > "$mark"
 }
 
+# 0) 确定性预检门(高频心跳的省钱关键):不动用 AI,先用 lark-cli 直接拉今日妙记列表,
+#    与去重台账比对。无新增 → 不建节点、不拉起运行器,删本轮日志静默退出(心跳成本≈2 次
+#    轻量 lark API 调用);有新增才走后面的完整链路。
+#    预检自身失败(user token 失效/网络异常) → 限流告警后退出,不 fail-open——
+#    避免凭据失效期间每个心跳都白烧一次 AI 调用(历史上正是这类空烧撞爆过月度额度)。
+#    页宽 30 为 minutes +search 单页上限;单日会议数 >30 且前 30 均已处理时可能漏检一轮,
+#    概率可忽略且下一心跳即兜底。
+SKIP_TOKENS="$(python3 "$HERE/update_state.py" skip "$LEDGER" "$DAY" "$BLOCKED_GIVEUP" 2>>"$LOG")"
+echo "[dedup] 跳过 token: ${SKIP_TOKENS:-(无)}" >> "$LOG" 2>&1
+_precheck() {  # $1 = owner-ids | participant-ids;输出 token 每行一个;查询失败输出 __PRECHK_ERR__
+  "$LARK" minutes +search --as user --"$1" me --start "$DAY" --end "$DAY" --page-size 30 --format json 2>>"$LOG" \
+    | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    assert d.get('ok')
+except Exception:
+    print('__PRECHK_ERR__'); sys.exit(0)
+for it in ((d.get('data') or {}).get('items') or []):
+    t = it.get('token') or it.get('minute_token') or ''
+    if t: print(t)
+"
+}
+PRECHK_ALL="$(printf '%s\n%s\n' "$(_precheck owner-ids)" "$(_precheck participant-ids)" | sort -u | grep -v '^$' || true)"
+if printf '%s\n' "$PRECHK_ALL" | grep -q '__PRECHK_ERR__'; then
+  echo "[precheck] ❌ minutes +search 预检失败(user token 失效或网络异常),终止本轮" >> "$LOG" 2>&1
+  alert precheck "⚠️ 会议纪要预检失败($STAMP):lark-cli minutes +search 不可用(user token 失效或网络异常),心跳暂停处理,修复登录态后自动恢复(本告警每天最多一条)。日志:$LOG"
+  exit 1
+fi
+NEW_TOKENS="$(printf '%s\n' "$PRECHK_ALL" | SKIP="$SKIP_TOKENS" python3 -c "
+import sys, os
+skip = set(t for t in os.environ.get('SKIP', '').split(',') if t)
+for line in sys.stdin:
+    t = line.strip()
+    if t and t not in skip:
+        print(t)
+")"
+if [ -z "$NEW_TOKENS" ]; then
+  rm -f "$LOG"   # 无新增:静默心跳,不留日志、不发通知(与既有"空跑静默成功"同观感)
+  exit 0
+fi
+echo "[precheck] 发现待处理妙记 $(printf '%s\n' "$NEW_TOKENS" | grep -c .) 篇" >> "$LOG" 2>&1
+
 # 1) 本地当天目录
 LOCAL_DIR="$BASE_DIR/$DAY"; mkdir -p "$LOCAL_DIR"
 rm -f "$LOCAL_DIR/_result.json"  # 清理上次结果,避免误读旧数据
@@ -87,9 +130,7 @@ fi
   alert nodefail "⚠️ 会议纪要任务失败($STAMP):无法创建知识库当天节点" >> "$LOG" 2>&1; exit 1; }
 
 # 3) headless 跑 workflow,把 dayNode/localDir/openId/minuteHost/skipTokens/minScore 通过指令传入
-#    去重判定在 bash 端确定性完成:已建文档的永久跳过、当天 BLOCKED 满 BLOCKED_GIVEUP 次的当天放弃
-SKIP_TOKENS="$(python3 "$HERE/update_state.py" skip "$LEDGER" "$DAY" "$BLOCKED_GIVEUP" 2>>"$LOG")"
-echo "[dedup] 跳过 token: ${SKIP_TOKENS:-(无)}" >> "$LOG" 2>&1
+#    去重判定已在第 0 步预检门确定性完成(SKIP_TOKENS);workflow 不读台账,只按此列表排除
 #    ⚠️ 用 set +e 包住运行器调用:否则运行器非零退出时 set -e 会抢先终止,
 #    导致下面的 RC 捕获与飞书告警(第 4 步)成为永远到不了的死代码。
 # 运行器 prompt 抽成变量,便于瞬时错误重试时复用(避免重复维护长指令)。

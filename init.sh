@@ -152,31 +152,35 @@ if [ -f "$MCP_DIR/index.js" ] && [ "${GEN_IMAGE:-1}" = "1" ]; then
   fi
 fi
 
-# 8) 配置自动运行频率(默认每天一次;直接回车全程用默认 = 保持"零手填")
+# 8) 配置自动运行频率(默认每 5 分钟订阅新增;直接回车全程用默认 = 保持"零手填")
+#    run.sh 第 0 步有确定性预检门:无新增妙记的心跳只花 2 次轻量 lark API、不拉起 AI,
+#    因此高频订阅是廉价且推荐的默认。
 echo "─────────────────────────────"
-echo "⏰ 配置多久自动跑一次(直接回车 = 每天一次)"
-SCHED_KIND="daily"; SCHED_HOUR=18; SCHED_MIN=47; SCHED_N=0
+echo "⏰ 配置多久自动跑一次(直接回车 = 每 5 分钟订阅新增)"
+SCHED_KIND="minutes"; SCHED_HOUR=18; SCHED_MIN=47; SCHED_N=5
 if [ -t 0 ]; then
-  echo "  1) 每天一次(默认)"
+  echo "  1) 每 5 分钟订阅新增(默认,推荐:无新增时静默,几乎零成本)"
   echo "  2) 每 N 小时一次"
-  echo "  3) 每 N 分钟一次"
-  echo "  4) 不自动跑(仅手动 ./run.sh)"
+  echo "  3) 每 N 分钟一次(自定义间隔)"
+  echo "  4) 每天定点一次"
+  echo "  5) 不自动跑(仅手动 ./run.sh)"
   read -r -p "选择 [1]: " ans || true
   case "${ans:-1}" in
     2) SCHED_KIND="hours"
        read -r -p "每几小时跑一次? [4]: " n || true
        SCHED_N="${n:-4}"; { [[ "$SCHED_N" =~ ^[0-9]+$ ]] && [ "$SCHED_N" -ge 1 ]; } || SCHED_N=4 ;;
     3) SCHED_KIND="minutes"
-       read -r -p "每几分钟跑一次? [30]: " n || true
-       SCHED_N="${n:-30}"; { [[ "$SCHED_N" =~ ^[0-9]+$ ]] && [ "$SCHED_N" -ge 1 ]; } || SCHED_N=30 ;;
-    4) SCHED_KIND="none" ;;
-    *) SCHED_KIND="daily"
+       read -r -p "每几分钟跑一次? [5]: " n || true
+       SCHED_N="${n:-5}"; { [[ "$SCHED_N" =~ ^[0-9]+$ ]] && [ "$SCHED_N" -ge 1 ]; } || SCHED_N=5 ;;
+    4) SCHED_KIND="daily"
        read -r -p "每天几点跑? HH:MM [18:47]: " t || true
        t="${t:-18:47}"
        if [[ "$t" =~ ^([0-9]{1,2}):([0-9]{2})$ ]]; then SCHED_HOUR="${BASH_REMATCH[1]}"; SCHED_MIN="${BASH_REMATCH[2]}"; else SCHED_HOUR=18; SCHED_MIN=47; fi ;;
+    5) SCHED_KIND="none" ;;
+    *) SCHED_KIND="minutes"; SCHED_N=5 ;;
   esac
 else
-  echo "  (非交互环境,默认:每天一次 18:47)"
+  echo "  (非交互环境,默认:每 5 分钟订阅新增)"
 fi
 
 case "$SCHED_KIND" in
