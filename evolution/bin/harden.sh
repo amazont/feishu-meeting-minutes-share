@@ -6,7 +6,7 @@
 #   harden.sh           # 加固(锁定 + 开 linger)
 #   harden.sh --status  # 查看当前锁定/linger 状态
 #   harden.sh --unlock  # 解锁(维护用;需要人工手改这些文件时)
-# 说明:chattr +i / linger 需 root,脚本用 sudo(bingzhe-01 已 NOPASSWD)。
+# 说明:chattr +i / linger 需 root,脚本用 sudo(目标机需已配 sudo 权限,交互式跑则输入密码即可)。
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 EVO="$ROOT/evolution"

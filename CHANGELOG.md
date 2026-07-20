@@ -4,6 +4,12 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 最新版本在最上方;每次发布都在顶部追加一条。（本文件自 2026-07-17 起维护,更早的历史以 git 提交记录为准。）
 
+## [1.4.2] - 2026-07-20
+
+### Changed
+- 安全审计后的信息披露收敛:`harden.sh` 注释与 CHANGELOG 历史条目中的内部主机名改为通用表述
+  (审计结论:全历史无凭据/个人标识/会议内容泄漏,详见本次审计;此为唯一整改项)。
+
 ## [1.4.1] - 2026-07-20
 
 ### Changed
@@ -57,7 +63,7 @@
 ### Notes
 - **失败降级**:MCP 未注册、生图接口报错、media-insert 失败,均不阻塞纪要主流程(降级为无图发布,url 照常返回)。
 - checker rubric 不变:配图在建档后插入,不进入本地 markdown,C1–C4 评分口径不受影响。
-- 依赖:运行机需已注册 gpt-image MCP(user scope)且可达 models-proxy;bingzhe-01 已于 2026-07-20 部署验证。
+- 依赖:运行机需已注册 gpt-image MCP(user scope)且生图接口可达;远端生产节点已于 2026-07-20 部署验证。
 
 ## [1.1.1] - 2026-07-20
 
@@ -83,4 +89,4 @@
 
 ### Notes
 - 实测验证:按上述 SVG 规范建档→导出画板 PNG,渲染为「结论带 + 彩色卡片 + 带标签时间线」,中文不溢出、无渲染异常。
-- 完整回归(`evolution/bin/regression.sh`,需 golden cases)需同步到远端 bingzhe-01 后在远端跑,以过 policy G2 门槛。
+- 完整回归(`evolution/bin/regression.sh`,需 golden cases)需同步到远端生产节点后在远端跑,以过 policy G2 门槛。
