@@ -30,8 +30,12 @@ MIN_SCORE=80
 REDRAFT_MAX=1
 BLOCKED_GIVEUP=3
 
-# 7) (可选)AI 配图开关:1 = 每篇纪要按核心结论自动生成一张扁平风配图,
-#    插入到文档「一、一句话结论」画板前。依赖名为 gpt-image 的 MCP
-#    (claude mcp add gpt-image --scope user -- node <path>/gpt-image-mcp/index.js);
-#    MCP 未注册或生图失败时自动降级为无图发布,不影响纪要主流程。0 = 关闭。
+# 7) (可选)AI 配图开关:1 = 向纪要 agent 暴露生图能力(项目内置 tools/gpt-image-mcp,
+#    init.sh 会自动安装依赖并注册到 Claude Code)。是否配图、配几张、插在哪,
+#    由 AI 读完纪要按内容自行判断(内容单薄就一张不配);生图/插图失败自动降级无图发布。
+#    0 = 关闭(不向 agent 暴露该能力)。
 GEN_IMAGE=1
+# (可选)生图 MCP 凭据:models-proxy 的 ak- key。留空则 MCP 回退读
+# 环境变量 GPT_IMAGE_KEY_FILE 指向的 key 文件。改后重跑 ./init.sh 生效。
+#GPT_IMAGE_KEY="ak-..."
+#GPT_IMAGE_BASE_URL="https://models-proxy.stepfun-inc.com"

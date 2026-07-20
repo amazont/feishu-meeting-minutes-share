@@ -6,8 +6,7 @@ export const meta = {
     { title: 'Discover', detail: 'minutes +search 拉取今日妙记,读 ledger 去重(跳过已 DONE)' },
     { title: 'Draft', detail: '每篇取 notes/逐字稿 → 生成结论前置式纪要 markdown 并写本地' },
     { title: 'Checker', detail: '独立只读 agent 按停止条件 C1–C4 打分,verdict<DONE 回灌缺口重写' },
-    { title: 'Illustrate', detail: '(可选,genImage 开启时)按纪要核心结论用 gpt-image MCP 生成配图' },
-    { title: 'Publish', detail: '在当天节点下建知识库文档(有配图则 media-insert 插入)' },
+    { title: 'Publish', detail: '在当天节点下建知识库文档;genImage 开启时向 agent 暴露 gpt-image 生图能力,是否配图由其按内容自行判断' },
     { title: 'Notify', detail: '发飞书通知,附全部文档链接与 checker 分数' },
     { title: 'Persist', detail: '把结构化结果写 _result.json,供 wrapper 确定性落台账/刷 state' },
   ],
@@ -26,9 +25,10 @@ export const meta = {
 //    - redraftMax: 额外重写次数(默认 1,即最多 2 稿)
 //    - rubricFile: (可选)checker 评分标准外置文件路径;传入时 checker 以该文件内容为准,
 //                  未传或读不到时回退到脚本内置 CRITERIA。进化系统只改这个文件即可调 rubric。
-//    - genImage:   (可选)true 时在 Publish 前用 gpt-image MCP(mcp__gpt-image__generate_image)
-//                  按纪要核心结论生成一张配图,建档后 media-insert 插到「一、一句话结论」前。
-//                  生图/插图任何失败都不阻塞纪要主流程(降级为无图发布)。MCP 未注册时自动跳过。
+//    - genImage:   (可选)true 时向 Publish agent 暴露 gpt-image MCP 生图能力
+//                  (mcp__gpt-image__generate_image)。是否配图、配几张、插在哪,
+//                  由 agent 按纪要内容自行判断(0 张也正常);生图/插图任何失败都
+//                  不阻塞纪要主流程。MCP 未注册时自动跳过。
 //    - offlineInput:(可选)离线回归模式:golden case 目录(每个子目录 <token>/ 含
 //                  transcript.md + meta.json)。启用后不调妙记 API、隐含 dryRun。
 //    - dryRun:     (可选)true 时跳过 Publish 建档与 Notify 通知,产出只落本地。
@@ -274,36 +274,23 @@ ${CRITERIA}`
     return { token: m.token, title, url: `dryrun://${fname}`, score: v ? v.score : 0, verdict, gaps: (v && v.gaps) || [] }
   }
 
-  // Illustrate(可选):按纪要核心结论生成一张 AI 配图。失败不阻塞,imgFile 为空即降级为无图发布。
-  let imgFile = ''
-  if (GEN_IMAGE) {
-    const img = await agent(
-      `为一篇会议纪要生成配图(视觉摘要),用 gpt-image MCP。
-1. 用 Read 读取纪要 ${path},提炼这场会的核心结论与主题意象。
-2. 调用 MCP 工具 mcp__gpt-image__generate_image(工具列表里没有就先用 ToolSearch 检索 generate_image;检索仍找不到说明 MCP 未注册,直接放弃返回空)。参数:
-   - prompt:你提炼的中文画面描述——现代扁平风商务插画,主题呼应会议核心结论(协作/发布/增长/架构/评审等意象自选),浅色干净背景,构图简洁留白,**画面中不得出现任何文字/字母/数字**。
-   - size: "1536x1024",n: 1
-   - filename: "${discovery.date}_${tail}_cover"
-   - out_dir: "${LOCAL_DIR}"
-3. 工具返回文本里含保存路径,按 schema 返回 {file:"<png 绝对路径>"}。
-任何失败(工具不存在/接口报错/超时)最多再试 1 次,仍失败返回 {file:""}——绝不因配图卡住纪要发布。`,
-      { label: `image:${tail}`, phase: 'Illustrate', schema: {
-          type: 'object', properties: { file: { type:'string' } }, required: ['file']
-      }}
-    )
-    imgFile = (img && img.file) || ''
-    if (!imgFile) log(`配图生成失败或 MCP 不可用(${tail}),降级为无图发布`)
-  }
-
-  // Publish(机械步骤,不改内容)
+  // Publish:建档是机械步骤;genImage 开启时把生图能力暴露给 agent——
+  // 要不要配图、配几张、插在哪,由它读完纪要自己判断,不做硬性编排。
   const pub = await agent(
-    `把本地 markdown 文件建成飞书知识库文档(挂当天节点下),机械步骤不改内容。
+    `把本地 markdown 文件建成飞书知识库文档(挂当天节点下),建档步骤机械执行、不改纪要内容。
 1. cd 到目录建文档(--content 必须相对路径;+create 不支持 --title/--format,标题取自 markdown 首行 #):
    cd "${LOCAL_DIR}" && lark-cli docs +create --as user --api-version v2 --parent-token ${DAY_NODE} --doc-format markdown --content @./${fname}
-2. 从返回 data.document.url 取链接。${imgFile ? `
-3. 插入配图(⚠️ 本步失败只记录、不影响返回,文档已建成功就算成功;--file 只接受当前目录下的相对路径,必须先 cd):
-   cd "${LOCAL_DIR}" && lark-cli docs +media-insert --as user --doc "<第2步的url>" --file "./${imgFile.split('/').pop()}" --selection-with-ellipsis "一、一句话结论" --before --align center --caption "AI 配图 · 视觉摘要(自动生成)"` : ''}
-${imgFile ? '4' : '3'}. 最后一个动作必须按 schema 返回 {url}(第2步拿到的文档链接)。`,
+2. 从返回 data.document.url 取链接。${GEN_IMAGE ? `
+3. (可选,由你自主判断)你具备 AI 生图能力:MCP 工具 mcp__gpt-image__generate_image(工具列表里没有就先用 ToolSearch 检索 generate_image;仍找不到说明未安装,静默跳过本步)。
+   读一遍这篇纪要,自行决定要不要配图、配几张(0–2 张为宜)、插在哪里:
+   - 值得配的信号:核心结论有鲜明意象、某个议题一张示意/氛围图能明显增强表达;
+   - 不值得配:纯信息同步、内容单薄、想不出贴切画面 → 一张不配,直接跳过,这完全正常。
+   若决定配图:
+   - 生成:prompt 写你提炼的中文画面描述(现代扁平风商务插画,浅色干净背景,构图简洁,**画面中不得出现任何文字/字母/数字**),size 按位置自选(横幅 1536x1024/方图 1024x1024),out_dir="${LOCAL_DIR}",filename 自拟。
+   - 插入(⚠️ --file 只接受当前目录下的相对路径,必须先 cd;--selection-with-ellipsis 填你选定插入点所在块的文字片段):
+     cd "${LOCAL_DIR}" && lark-cli docs +media-insert --as user --doc "<第2步的url>" --file "./<生成的png文件名>" --selection-with-ellipsis "<插入点文字片段>" --before --align center --caption "<一句贴切的图注>"
+   - 任何失败(工具不存在/生图报错/插入报错)只记录、最多再试 1 次,然后放弃配图——绝不因配图影响建档结果。` : ''}
+${GEN_IMAGE ? '4' : '3'}. 最后一个动作必须按 schema 返回 {url}(第2步拿到的文档链接)。`,
     { label: `publish:${tail}`, phase: 'Publish', schema: {
         type: 'object', properties: { url:{type:'string'} }, required: ['url']
     }}

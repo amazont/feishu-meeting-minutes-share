@@ -28,3 +28,7 @@ __pycache__/
 
 # 妙记逐字稿导出产物(lark-cli minutes +detail --transcript 会在 cwd 落 minutes/<token>/transcript.txt)——含会议内容,禁止入库
 minutes/
+
+# 内置生图 MCP 的依赖(init.sh 时 npm install,不入库)
+tools/gpt-image-mcp/node_modules/
+tools/gpt-image-mcp/package-lock.json

@@ -4,6 +4,21 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 最新版本在最上方;每次发布都在顶部追加一条。（本文件自 2026-07-17 起维护,更早的历史以 git 提交记录为准。）
 
+## [1.3.0] - 2026-07-20
+
+### Changed
+- **配图从"固定编排"改为"能力暴露"**(用户反馈:不要死板):撤掉 1.2.0 的独立 Illustrate 阶段与
+  固定插图位置;改为 Publish agent 建档后获得生图能力说明(`mcp__gpt-image__generate_image`),
+  由 AI 读完纪要**自行判断**要不要配图、配几张(0–2 张)、插在哪(`media-insert --selection-with-ellipsis`
+  位置自选)。内容单薄不配图是正常结果。失败降级逻辑不变。
+
+### Added
+- **生图 MCP 内置进项目**:`tools/gpt-image-mcp/`(index.js + package.json + README)随包分发;
+  `init.sh` 新增 7.5 步——自动 `npm install` 依赖 + 注册 user scope MCP(已注册则跳过,
+  支持从 config.sh 读 `GPT_IMAGE_KEY`/`GPT_IMAGE_BASE_URL` 注入 MCP 环境),新用户初始化即得配图能力。
+- init.sh 生成的 config.sh 与 config.example.sh 增加 `GEN_IMAGE` 与凭据配置说明;
+  `.gitignore` 屏蔽 `tools/gpt-image-mcp/node_modules/`。
+
 ## [1.2.0] - 2026-07-20
 
 ### Added

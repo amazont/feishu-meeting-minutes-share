@@ -75,6 +75,12 @@ MIN_SCORE=80
 REDRAFT_MAX=1
 # 同一篇 BLOCKED(取不到产物)当天最多重试几次,达到后当天放弃(高频心跳防空跑)
 BLOCKED_GIVEUP=3
+
+# AI 配图:1 = 向纪要 agent 暴露 gpt-image MCP 生图能力(是否配图由 AI 按内容自行判断),0 = 关闭
+GEN_IMAGE=1
+# (可选)生图 MCP 的凭据;留空则 MCP 回退读环境变量 GPT_IMAGE_KEY_FILE 指向的 key 文件
+#GPT_IMAGE_KEY="ak-..."
+#GPT_IMAGE_BASE_URL="https://models-proxy.stepfun-inc.com"
 EOF
 echo "✅ 已写入配置:$HERE/config.sh"
 
@@ -116,6 +122,35 @@ echo "✅ 已建状态目录:$STATE_DIR(去重台账 + state.md)"
 mkdir -p "$HOME/.claude/workflows"
 cp "$HERE/daily-meeting-minutes.js" "$HOME/.claude/workflows/"
 echo "✅ 已安装 workflow 到 ~/.claude/workflows/"
+
+# 7.5) 注册内置生图 MCP(gpt-image):给纪要按需配图用。全程失败容忍——任何一步失败
+#      只提示不中断,workflow 侧会自动降级为无图发布(config.sh 里 GEN_IMAGE=0 可整体关闭)。
+. "$HERE/config.sh" 2>/dev/null || true
+MCP_DIR="$HERE/tools/gpt-image-mcp"
+if [ -f "$MCP_DIR/index.js" ] && [ "${GEN_IMAGE:-1}" = "1" ]; then
+  # 依赖缺失时就地安装(node_modules 不随包分发)
+  if ! node -e "require.resolve('@modelcontextprotocol/sdk/package.json',{paths:['$MCP_DIR']})" >/dev/null 2>&1; then
+    (cd "$MCP_DIR" && npm install --silent --no-audit --no-fund >/dev/null 2>&1) \
+      || echo "⚠️ gpt-image MCP 依赖安装失败(不影响纪要主流程,配图将自动跳过;可稍后手动 cd $MCP_DIR && npm install)"
+  fi
+  # 已注册则跳过(user 配置在 ~/.claude.json,CLAUDE_CONFIG_DIR 设置时在其下)
+  CLAUDE_JSON="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
+  if python3 -c "import json,sys; d=json.load(open('$CLAUDE_JSON')); sys.exit(0 if 'gpt-image' in (d.get('mcpServers') or {}) else 1)" 2>/dev/null; then
+    echo "✅ 生图 MCP(gpt-image)已注册,跳过"
+  else
+    # 注册命令走 claude(sc 会透传 mcp 子命令,但直连 claude 最稳)
+    MCPRUN="claude"; command -v claude >/dev/null 2>&1 || MCPRUN="sc claude"
+    # 若 config.sh 提供了 GPT_IMAGE_KEY,则注册时注入 MCP 环境(否则回退读 GPT_IMAGE_KEY_FILE)
+    MCP_ENV=()
+    [ -n "${GPT_IMAGE_KEY:-}" ] && MCP_ENV+=(--env "GPT_IMAGE_KEY=$GPT_IMAGE_KEY")
+    [ -n "${GPT_IMAGE_BASE_URL:-}" ] && MCP_ENV+=(--env "GPT_IMAGE_BASE_URL=$GPT_IMAGE_BASE_URL")
+    if $MCPRUN mcp add --scope user "${MCP_ENV[@]}" gpt-image -- node "$MCP_DIR/index.js" >/dev/null 2>&1; then
+      echo "✅ 已注册生图 MCP(gpt-image,user scope)——纪要会由 AI 按内容自行决定是否配图"
+    else
+      echo "⚠️ gpt-image MCP 注册失败(不影响纪要主流程;可稍后手动:claude mcp add --scope user gpt-image -- node $MCP_DIR/index.js)"
+    fi
+  fi
+fi
 
 # 8) 配置自动运行频率(默认每天一次;直接回车全程用默认 = 保持"零手填")
 echo "─────────────────────────────"

@@ -1,0 +1,11 @@
+{
+  "name": "gpt-image-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": { "gpt-image-mcp": "index.js" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.8"
+  }
+}
