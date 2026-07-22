@@ -4,6 +4,22 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 最新版本在最上方;每次发布都在顶部追加一条。（本文件自 2026-07-17 起维护,更早的历史以 git 提交记录为准。）
 
+## [1.5.1] - 2026-07-22
+
+### Fixed
+- **auth-healthcheck.sh 误报**:`needs_refresh` 不再直接告警。access token 临期/刚过期但
+  refresh token 有效时,任何 user 调用都会触发自动续期——现在先做 wiki 实探(本身即触发续期),
+  探测通过就静默退出。修复 2026-07-22 10:08 "needs_refresh" 告警(10:10 token 即自愈)这类
+  窗口期误报。
+
+### Added
+- **真失效时自动 Device Flow 出码**:探测失败(token 真死)时,脚本自动 `auth login --no-wait`
+  发起设备授权,`auth qrcode` 生成二维码 PNG(在 _logs 目录内用相对路径),经机器人把二维码图片
+  和授权链接直接发给用户,并后台轮询 `--device-code`(10 分钟窗口):扫码成功自动完成登录并回报
+  ✅,超时回报 ❌ 等下次自检重发。用户全程无需上机器敲命令。重新授权域由 `AUTH_DOMAINS` 控制,
+  默认 `wiki,docs,drive,minutes,im,contact,vc`(覆盖会议纪要全链路)。Device Flow 起不来时
+  退回旧文字告警兜底。
+
 ## [1.5.0] - 2026-07-20
 
 ### Added
